@@ -1,7 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
+import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator, Alert, Image, Modal,
   RefreshControl,
@@ -15,13 +15,15 @@ export default function ReservationListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState(null);
 
+  // 📑 เพิ่ม State สำหรับจัดการแท็บการกรองข้อมูล ('all', 'daily', 'monthly')
+  const [activeTab, setActiveTab] = useState('all');
+
   // ✅ 1. ฟังก์ชันดึงข้อมูลจาก API
   const fetchBookings = async () => {
     try {
       const payload = { userId: 5 }; // แก้เป็น ID ผู้ใช้ที่เข้าสู่ระบบจริงถ้ามี
       const response = await axios.post('https://projeccty3-server.onrender.com/api/checkbooking', payload);
       
-      // ตรวจสอบโครงสร้าง response.data.data ตามที่คุณส่งมา
       if (response.data && response.data.success && Array.isArray(response.data.data)) {
         const myData = response.data.data.reverse(); // เอาอันล่าสุดขึ้นก่อน
         setBookings(myData);
@@ -37,14 +39,14 @@ export default function ReservationListScreen() {
     }
   };
 
-  // ✅ 2. ระบบ Auto-Refresh: ดึงข้อมูลใหม่ทุกครั้งที่ผู้ใช้จองเสร็จแล้วถูกส่งกลับมาหน้านี้
+  // ✅ 2. ระบบ Auto-Refresh
   useFocusEffect(
     useCallback(() => {
       fetchBookings();
     }, [])
   );
 
-  // ✅ 3. ฟังก์ชันยกเลิกการจอง (เรียกใช้ API DELETE)
+  // ✅ 3. ฟังก์ชันยกเลิกการจอง
   const handleCancelBooking = (bookingId) => {
     if (!bookingId) {
       Alert.alert("ผิดพลาด", "ไม่พบรหัสการจอง");
@@ -62,12 +64,11 @@ export default function ReservationListScreen() {
           onPress: async () => {
             setLoading(true);
             try {
-              // ยิง API Delete ไปที่ server โดยตรง
               const response = await axios.delete(`https://projeccty3-server.onrender.com/api/Booking/${bookingId}`);
               
               if (response.status === 200 || response.status === 204 || response.data.success) {
                 Alert.alert("สำเร็จ", "ยกเลิกการจองเรียบร้อยแล้ว");
-                fetchBookings(); // รีเฟรชรายการในหน้าทันที
+                fetchBookings(); 
               } else {
                 Alert.alert("ผิดพลาด", "ไม่สามารถยกเลิกรายการได้");
               }
@@ -89,6 +90,21 @@ export default function ReservationListScreen() {
     fetchBookings();
   };
 
+  // 🔍 ฟังก์ชัน Filter จำแนกข้อมูลตามแท็บที่เลือก
+  const filteredBookings = bookings.filter(item => {
+    if (activeTab === 'all') return true;
+    
+    const typeStr = (item.roomType || '').toLowerCase();
+    // ตรวจสอบคำว่า "รายวัน" / "daily" หรือ "รายเดือน" / "monthly" ในโครงสร้างข้อมูล
+    if (activeTab === 'daily') {
+      return typeStr.includes('รายวัน') || typeStr.includes('daily');
+    }
+    if (activeTab === 'monthly') {
+      return typeStr.includes('รายเดือน') || typeStr.includes('monthly');
+    }
+    return true;
+  });
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
       <StatusBar barStyle="dark-content" />
@@ -108,6 +124,34 @@ export default function ReservationListScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* 🧭 Tabs Navigator สำหรับเลือกหมวดหมู่ */}
+      <View style={{ flexDirection: 'row', backgroundColor: 'white', paddingHorizontal: 15, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+        {[
+          { id: 'all', title: 'ทั้งหมด' },
+          { id: 'daily', title: 'รายวัน' },
+          { id: 'monthly', title: 'รายเดือน' }
+        ].map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <TouchableOpacity
+              key={tab.id}
+              onPress={() => setActiveTab(tab.id)}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                alignItems: 'center',
+                borderBottomWidth: 3,
+                borderBottomColor: isActive ? '#0194F3' : 'transparent'
+              }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: isActive ? '#0194F3' : '#64748B' }}>
+                {tab.title}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {loading && !refreshing ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#0194F3" />
@@ -119,13 +163,15 @@ export default function ReservationListScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {bookings.length === 0 ? (
+          {filteredBookings.length === 0 ? (
             <View style={{ alignItems: 'center', marginTop: 100 }}>
               <Ionicons name="receipt-outline" size={80} color="#CBD5E1" />
-              <Text style={{ fontSize: 18, color: '#94A3B8', marginTop: 15 }}>ไม่มีประวัติการจอง</Text>
+              <Text style={{ fontSize: 16, color: '#94A3B8', marginTop: 15 }}>
+                ไม่มีประวัติการจองในหมวดหมู่นี้
+              </Text>
             </View>
           ) : (
-            bookings.map((item, index) => (
+            filteredBookings.map((item, index) => (
               <View key={index} style={{ 
                 backgroundColor: 'white', borderRadius: 28, marginBottom: 20, 
                 overflow: 'hidden', elevation: 8, shadowColor: '#000', shadowOpacity: 0.1
