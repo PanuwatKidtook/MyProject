@@ -16,6 +16,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import api from '../../lib/api';
 
 
 export default function ProfileEditScreen() {
@@ -30,9 +31,6 @@ export default function ProfileEditScreen() {
     name: '',
     phone: '',
     email: '',
-    roomNo: '',
-    lineId: '',
-    address: '',
   });
 
 
@@ -43,21 +41,29 @@ export default function ProfileEditScreen() {
 
   const loadProfile = async () => {
     try {
-      const userData = await AsyncStorage.getItem('userProfile');
-      if (userData) {
-        const user = JSON.parse(userData);
-        setForm({
-          name: user.name || '',
-          phone: user.phone || '',
-          email: user.email || '',
-          roomNo: user.roomNo || '',
-          lineId: user.lineId || '',
-          address: user.address || '',
-        });
-      }
+      // ดึงข้อมูลล่าสุดจาก server — ไม่ใช้แค่ AsyncStorage ที่อาจเก่า
+      const response = await api.get('/current-user');
+      const data = response.data.data;
+      setForm({
+        name: data.full_name || '',
+        phone: data.phone_number || '',
+        email: data.email || '',
+      });
     } catch (error) {
-      console.log('Load profile error:', error);
-      Alert.alert('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลโปรไฟล์ได้');
+      // ถ้า API ล้มเหลว fallback จาก AsyncStorage
+      try {
+        const userData = await AsyncStorage.getItem('userProfile');
+        if (userData) {
+          const user = JSON.parse(userData);
+          setForm({
+            name: user.full_name || user.name || '',
+            phone: user.phone_number || '',
+            email: user.email || '',
+          });
+        }
+      } catch (e) {
+        Alert.alert('เกิดข้อผิดพลาด', 'ไม่สามารถโหลดข้อมูลโปรไฟล์ได้');
+      }
     } finally {
       setLoading(false);
     }
@@ -75,28 +81,31 @@ export default function ProfileEditScreen() {
   const handleSave = async () => {
     try {
       setSaving(true);
+
+      // 1. บันทึกไปยัง backend
+      await api.put('/profile', {
+        full_name: form.name,
+        email: form.email,
+        phone_number: form.phone,
+      });
+
+      // 2. อัปเดต AsyncStorage ให้ตรงกัน
       const userData = await AsyncStorage.getItem('userProfile');
       const oldUser = userData ? JSON.parse(userData) : {};
-
-
-      const updatedUser = {
+      await AsyncStorage.setItem('userProfile', JSON.stringify({
         ...oldUser,
         name: form.name,
-        phone: form.phone,
+        full_name: form.name,
         email: form.email,
-        roomNo: form.roomNo,
-        lineId: form.lineId,
-        address: form.address,
-      };
+        phone_number: form.phone,
+      }));
 
-
-      await AsyncStorage.setItem('userProfile', JSON.stringify(updatedUser));
       Alert.alert('สำเร็จ', 'บันทึกข้อมูลเรียบร้อยแล้ว', [
         { text: 'ตกลง', onPress: () => router.back() }
       ]);
     } catch (error) {
-      console.log('Save profile error:', error);
-      Alert.alert('เกิดข้อผิดพลาด', 'ไม่สามารถบันทึกข้อมูลได้');
+      const msg = error.response?.data?.message || 'ไม่สามารถบันทึกข้อมูลได้';
+      Alert.alert('เกิดข้อผิดพลาด', msg);
     } finally {
       setSaving(false);
     }
@@ -168,7 +177,6 @@ export default function ProfileEditScreen() {
               style={styles.input}
             />
 
-
             <Text style={styles.label}>Email</Text>
             <TextInput
               value={form.email}
@@ -178,39 +186,6 @@ export default function ProfileEditScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               style={styles.input}
-            />
-
-
-            <Text style={styles.label}>RoomNumber</Text>
-            <TextInput
-              value={form.roomNo}
-              onChangeText={(text) => handleChange('roomNo', text)}
-              placeholder="กรอกเลขห้อง"
-              placeholderTextColor="#94A3B8"
-              style={styles.input}
-            />
-
-
-            <Text style={styles.label}>Line ID</Text>
-            <TextInput
-              value={form.lineId}
-              onChangeText={(text) => handleChange('lineId', text)}
-              placeholder="กรอก Line ID"
-              placeholderTextColor="#94A3B8"
-              autoCapitalize="none"
-              style={styles.input}
-            />
-
-
-            <Text style={styles.label}>Address</Text>
-            <TextInput
-              value={form.address}
-              onChangeText={(text) => handleChange('address', text)}
-              placeholder="กรอกที่อยู่"
-              placeholderTextColor="#94A3B8"
-              multiline
-              numberOfLines={4}
-              style={[styles.input, styles.textArea]}
             />
           </View>
 

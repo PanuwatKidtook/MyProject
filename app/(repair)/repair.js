@@ -1,5 +1,6 @@
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import api from '../../lib/api';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
@@ -52,33 +53,29 @@ export default function RepairScreen() {
     }, [])
   );
 
+  // backend ใช้ PascalCase เสมอ
   const role = user?.role || 'guest';
 
   const profileTitle = useMemo(() => {
-    if (role === 'daily_tenant') return 'ผู้แจ้งปัญหา: ผู้เช่ารายวัน';
-    if (role === 'monthly_tenant') return 'ผู้แจ้งปัญหา: ผู้เช่ารายเดือน';
+    if (role === 'Daily_Tenant') return 'ผู้แจ้งปัญหา: ผู้เช่ารายวัน';
+    if (role === 'Monthly_Tenant') return 'ผู้แจ้งปัญหา: ผู้เช่ารายเดือน';
     return 'ข้อมูลผู้แจ้ง';
   }, [role]);
 
   const roleSubtitle = useMemo(() => {
-    if (role === 'daily_tenant') return 'รูปแบบการแจ้งสำหรับการเข้าพักระยะสั้น';
-    if (role === 'monthly_tenant') return 'รูปแบบการแจ้งสำหรับลูกบ้านประจำ';
+    if (role === 'Daily_Tenant') return 'ผู้เช่ารายวันไม่สามารถแจ้งซ่อมได้ (สิทธิ์เฉพาะผู้เช่ารายเดือน)';
+    if (role === 'Monthly_Tenant') return 'รูปแบบการแจ้งสำหรับลูกบ้านประจำ';
     return 'กรุณาเข้าสู่ระบบเพื่อใช้งานแบบเต็มรูปแบบ';
   }, [role]);
 
   const problemButtons = useMemo(() => {
-    if (role === 'daily_tenant') {
-      return ['ไฟฟ้า', 'แอร์', 'น้ำประปา', 'กลอนประตู', 'อื่น ๆ'];
-    }
-    if (role === 'monthly_tenant') {
-      return ['ไฟฟ้า', 'แอร์', 'น้ำประปา', 'ประตู/กุญแจ', 'อินเทอร์เน็ต', 'บิล/มิเตอร์', 'อื่น ๆ'];
-    }
-    return ['ไฟฟ้า', 'แอร์', 'น้ำประปา', 'ประตู/กุญแจ', 'อินเทอร์เน็ต', 'อื่น ๆ'];
-  }, [role]);
+    return ['ไฟฟ้า', 'แอร์', 'น้ำประปา', 'ประตู/กุญแจ', 'อินเทอร์เน็ต', 'บิล/มิเตอร์', 'อื่น ๆ'];
+  }, []);
 
-  const submitRepair = () => {
-    if (!roomNo.trim()) {
-      Alert.alert('กรุณากรอกห้องพัก', 'กรอกเลขห้องก่อนส่งแจ้งซ่อม');
+  const submitRepair = async () => {
+    // เฉพาะ Monthly_Tenant เท่านั้นที่แจ้งซ่อมได้ (backend มี monthlyTenantCheck)
+    if (role !== 'Monthly_Tenant') {
+      Alert.alert('ไม่มีสิทธิ์', 'การแจ้งซ่อมสำหรับผู้เช่ารายเดือนเท่านั้น');
       return;
     }
     if (!problemType.trim()) {
@@ -90,20 +87,35 @@ export default function RepairScreen() {
       return;
     }
 
-    Alert.alert(
-      'ส่งแจ้งซ่อมสำเร็จ',
-      'ระบบได้รับรายการแจ้งปัญหาของคุณแล้ว',
-      [
-        {
-          text: 'ตกลง',
-          onPress: () => router.back(),
-        },
-      ]
-    );
+    try {
+      // 1. ดึง booking ที่กำลังเข้าพักอยู่ — ต้องมี booking_id ก่อนส่งแจ้งซ่อม
+      const bookingsRes = await api.post('/checkbooking', {});
+      const allBookings = bookingsRes.data?.data || [];
+      const activeBooking = allBookings.find(b => b.bookingStatus === 'กำลังเข้าพัก');
+
+      if (!activeBooking) {
+        Alert.alert('ไม่พบการเข้าพัก', 'ต้องมีการจองที่เช็คอินแล้ว (สถานะ "กำลังเข้าพัก") จึงแจ้งซ่อมได้');
+        return;
+      }
+
+      // 2. ส่งแจ้งซ่อมพร้อม booking_id
+      await api.post('/repair', {
+        booking_id: activeBooking.bookingId,
+        problem_title: problemType,
+        problem_details: problemDetail,
+      });
+
+      Alert.alert('ส่งแจ้งซ่อมสำเร็จ', 'ระบบได้รับรายการแจ้งปัญหาของคุณแล้ว', [
+        { text: 'ตกลง', onPress: () => router.back() },
+      ]);
+    } catch (err) {
+      const msg = err.response?.data?.message || 'ส่งแจ้งซ่อมไม่สำเร็จ กรุณาลองใหม่';
+      Alert.alert('ส่งไม่สำเร็จ', msg);
+    }
   };
 
   const renderRoleBadge = () => {
-    if (role === 'daily_tenant') {
+    if (role === 'Daily_Tenant') {
       return (
         <View style={[styles.roleBadge, { backgroundColor: '#E0F2FE', borderColor: '#BAE6FD' }]}>
           <FontAwesome5 name="hotel" size={14} color="#0284C7" />
@@ -111,7 +123,7 @@ export default function RepairScreen() {
         </View>
       );
     }
-    if (role === 'monthly_tenant') {
+    if (role === 'Monthly_Tenant') {
       return (
         <View style={[styles.roleBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
           <FontAwesome5 name="building" size={14} color="#059669" />
@@ -128,7 +140,7 @@ export default function RepairScreen() {
   };
 
   const renderTopCard = () => {
-    if (role === 'daily_tenant') {
+    if (role === 'Daily_Tenant') {
       return (
         <View style={styles.topCardDaily}>
           <View style={styles.topCardRow}>
@@ -154,7 +166,7 @@ export default function RepairScreen() {
       );
     }
 
-    if (role === 'monthly_tenant') {
+    if (role === 'Monthly_Tenant') {
       return (
         <View style={styles.topCardMonthly}>
           <View style={styles.topCardRow}>
@@ -238,7 +250,7 @@ export default function RepairScreen() {
                 style={styles.input}
               />
 
-              {(role === 'monthly_tenant' || role === 'daily_tenant') && (
+              {(role === 'Monthly_Tenant' || role === 'Daily_Tenant') && (
                 <>
                   <Text style={styles.label}>ข้อมูลติดต่อ</Text>
                   <View style={styles.contactGrid}>
@@ -261,7 +273,7 @@ export default function RepairScreen() {
                 </>
               )}
 
-              {role === 'monthly_tenant' && (
+              {role === 'Monthly_Tenant' && (
                 <>
                   <Text style={styles.label}>เวลาที่สะดวกให้ช่างติดต่อ</Text>
                   <TextInput
@@ -296,11 +308,7 @@ export default function RepairScreen() {
               <TextInput
                 value={problemDetail}
                 onChangeText={setProblemDetail}
-                placeholder={
-                  role === 'daily_tenant'
-                    ? 'เช่น แอร์ไม่เย็น, น้ำไหลเบา, ไฟห้องดับ'
-                    : 'เช่น แอร์เสีย, ประตูล็อกไม่ได้, ปลั๊กไม่ทำงาน'
-                }
+                placeholder='เช่น แอร์เสีย, ประตูล็อกไม่ได้, ปลั๊กไม่ทำงาน'
                 placeholderTextColor="#94A3B8"
                 style={[styles.input, styles.textArea]}
                 multiline
