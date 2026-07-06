@@ -7,9 +7,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { Calendar } from 'react-native-calendars';
 import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-
-const API_BASE_URL = 'https://projeccty3-server.onrender.com/api';
+import api from '../../lib/api';
 
 export default function DailyReservationScreen() {
   const router = useRouter();
@@ -68,15 +66,6 @@ export default function DailyReservationScreen() {
 
   const t = text[lang];
 
-  const getAuthHeaders = async () => {
-    try {
-      const token = await AsyncStorage.getItem('token');
-      return token ? { Authorization: `Bearer ${token}` } : {};
-    } catch {
-      return {};
-    }
-  };
-
   useFocusEffect(
     useCallback(() => {
       const checkUserStatus = async () => {
@@ -96,16 +85,9 @@ export default function DailyReservationScreen() {
     if (!isDateSelected) return;
     setFetching(true);
     try {
-      const payload = { checkIn: startDate, checkOut: endDate };
-      const response = await axios.post(`${API_BASE_URL}/search-rooms`, payload);
-
-      if (response.data && response.data.data) {
-        setRoomsData(response.data.data);
-      } else {
-        setRoomsData([]);
-      }
+      const response = await api.post('/search-rooms', { checkIn: startDate, checkOut: endDate });
+      setRoomsData(response.data?.data || []);
     } catch (error) {
-      console.error("Fetch Error:", error.message);
       setRoomsData([]);
     } finally {
       setFetching(false);
@@ -116,14 +98,9 @@ export default function DailyReservationScreen() {
   const fetchAllRooms = async () => {
     try {
       setFetching(true);
-      const response = await axios.get(`${API_BASE_URL}/getRoom`);
-      if (response.data && response.data.data) {
-        setRoomsData(response.data.data);
-      } else {
-        setRoomsData([]);
-      }
+      const response = await api.get('/getRoom');
+      setRoomsData(response.data?.data || []);
     } catch (error) {
-      console.error("Fetch All Rooms Error:", error.message);
       setRoomsData([]);
     } finally {
       setFetching(false);
@@ -176,23 +153,16 @@ export default function DailyReservationScreen() {
     if (!selectedRoom) return;
     setLoading(true);
     try {
-      const headers = await getAuthHeaders();
-      const payload = {
+      // token แนบอัตโนมัติจาก interceptor ใน lib/api.js
+      await api.post('/booking', {
         roomId: selectedRoom.id,
-        userId: user?.id || 5,
         startDate: startDate,
-        endDate: endDate
-      };
-
-      const response = await axios.post(`${API_BASE_URL}/booking`, payload, { headers });
-
-      if (response.status === 200 || response.status === 201) {
-        setSelectedRoom(null);
-        triggerNotification();
-        fetchRooms();
-      } else {
-        Alert.alert("ขออภัย", t.fail);
-      }
+        endDate: endDate,
+        rentType: 'daily',
+      });
+      setSelectedRoom(null);
+      triggerNotification();
+      fetchRooms();
     } catch (error) {
       Alert.alert("ขออภัย", error.response?.data?.message || t.fail);
       fetchRooms();
@@ -213,7 +183,8 @@ export default function DailyReservationScreen() {
     }
   };
 
-  const floors = [...new Set(roomsData.map(item => item.floor))].filter(f => f !== undefined).sort();
+  // กรองเฉพาะห้องที่สถานะ 'ว่าง' — ไม่มี field floor ใน schema
+  const availableRooms = roomsData.filter(room => room.status === 'ว่าง');
 
   return (
     <View style={{ flex: 1, backgroundColor: '#F8F9FB' }}>
@@ -429,29 +400,17 @@ export default function DailyReservationScreen() {
           {fetching ? (
             <ActivityIndicator size="large" color="#0194F3" style={{ marginTop: 20 }} />
           ) : (
-            floors.length > 0 ? (
-              floors.map(floorNum => {
-                const availableRooms = roomsData.filter(room => room.floor === floorNum && room.monthly_booked_status === false);
-                if (availableRooms.length === 0) return null;
-                return (
-                  <View key={floorNum} style={{ marginBottom: 25 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                      <View style={{ width: 4, height: 16, backgroundColor: '#0194F3', borderRadius: 2, marginRight: 10 }} />
-                      <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#64748B' }}>{t.floor}{floorNum}</Text>
+            availableRooms.length > 0 ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {availableRooms.map(room => (
+                  <TouchableOpacity key={room.id} onPress={() => setSelectedRoom(room)} style={{ width: '30%', margin: '1.5%', height: 90, borderRadius: 20, justifyContent: 'center', alignItems: 'center', backgroundColor: 'white', borderWidth: 1, borderColor: '#F1F5F9', elevation: 3 }}>
+                    <Text style={{ fontSize: 18, fontWeight: '800', color: '#1E293B' }}>{room.number}</Text>
+                    <View style={{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: '#E3F6ED' }}>
+                      <Text style={{ fontSize: 9, fontWeight: '900', color: '#10B981' }}>{t.available}</Text>
                     </View>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                      {availableRooms.map(room => (
-                        <TouchableOpacity key={room.id} onPress={() => setSelectedRoom(room)} style={{ width: '30%', margin: '1.5%', height: 90, borderRadius: 20, justifyContent: 'center', alignItems: 'center', backgroundColor: 'white', borderWidth: 1, borderColor: '#F1F5F9', elevation: 3 }}>
-                          <Text style={{ fontSize: 18, fontWeight: '800', color: '#1E293B' }}>{room.number}</Text>
-                          <View style={{ marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: '#E3F6ED' }}>
-                            <Text style={{ fontSize: 9, fontWeight: '900', color: '#10B981' }}>{t.available}</Text>
-                          </View>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                );
-              })
+                  </TouchableOpacity>
+                ))}
+              </View>
             ) : (
               <View style={{ alignItems: 'center', marginTop: 20 }}>
                 <Text style={{ color: '#94A3B8' }}>ไม่พบห้องว่างสำหรับรายวันในช่วงเวลาดังกล่าว</Text>
@@ -488,7 +447,7 @@ export default function DailyReservationScreen() {
                     <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 14, fontWeight: '600' }}>รายวันสุดหรู</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 26, fontWeight: '900', color: '#0194F3' }}>฿{selectedRoom?.basePricedaily}</Text>
+                    <Text style={{ fontSize: 26, fontWeight: '900', color: '#0194F3' }}>฿{selectedRoom?.price}</Text>
                     <Text style={{ fontSize: 12, color: '#64748B', fontWeight: 'bold' }}>{t.unitD}</Text>
                   </View>
                 </View>

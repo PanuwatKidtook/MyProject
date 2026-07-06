@@ -184,7 +184,8 @@ export default function HomeScreen() {
 
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem('userProfile');
+    // ลบทั้ง token และ userProfile
+    await AsyncStorage.multiRemove(['token', 'userProfile']);
     setUser(null);
     setIsMenuOpen(false);
     setIsProfileMenuOpen(false);
@@ -478,7 +479,7 @@ export default function HomeScreen() {
 
 
         <View style={{ marginTop: -40, backgroundColor: 'white', borderTopLeftRadius: 40, borderTopRightRadius: 40, padding: 25 }}>
-          {(!user || user.role === 'guest' || !user.role) && (
+          {(!user || (user.role !== 'Daily_Tenant' && user.role !== 'Monthly_Tenant')) && (
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => openBookingModal(user ? 'book' : 'check')}
@@ -499,7 +500,7 @@ export default function HomeScreen() {
           )}
 
 
-          {user && user.role === 'daily_tenant' && (
+          {user && user.role === 'Daily_Tenant' && (
             <View style={{ backgroundColor: '#F0F9FF', borderWidth: 1, borderColor: '#BAE6FD', padding: 20, borderRadius: 25, marginBottom: 20 }}>
               <Text style={{ fontSize: 16, fontWeight: '900', color: '#0369A1' }}>ห้องพักรายวันของคุณ: ห้อง {user.roomNo || '204'}</Text>
               <Text style={{ color: '#0284C7', fontSize: 12, marginBottom: 15, marginTop: 2, fontWeight: '600' }}>📅 รายการเข้าพักระยะสั้น (Daily Tenant)</Text>
@@ -526,7 +527,7 @@ export default function HomeScreen() {
           )}
 
 
-          {user && user.role === 'monthly_tenant' && (
+          {user && user.role === 'Monthly_Tenant' && (
             <View style={{ marginBottom: 20 }}>
               <View style={{ backgroundColor: '#0178C7', padding: 20, borderRadius: 25, marginBottom: 15 }}>
                 <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: 'bold' }}>บัญชีลูกบ้านรายเดือน</Text>
