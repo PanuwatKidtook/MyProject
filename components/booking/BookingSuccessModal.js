@@ -63,29 +63,19 @@ export default function BookingSuccessModal({ visible, result, onGoHistory, onCl
 
   if (!result) return null;
 
-  // ขอ QR PromptPay ของค่าจอง (สร้างบิลค่าห้องให้ด้วย) — เตือน 5 นาทีก่อน 1 ครั้ง (USER_FLOWS ข้อ 6/5)
-  const startPay = () => {
-    Alert.alert(
-      'แจ้งเตือนเวลาชำระเงิน',
-      'คุณมีเวลา 5 นาทีในการชำระเงิน มิฉะนั้นการจองจะถูกยกเลิกอัตโนมัติและห้องจะถูกปล่อยคืน',
-      [
-        { text: 'ยกเลิก', style: 'cancel' },
-        {
-          text: 'รับทราบ ดำเนินการต่อ',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              const res = await api.post(`/booking/${result.bookingId}/pay-now`);
-              if (res.data?.success) setQr(res.data.data);
-            } catch (err) {
-              Alert.alert('ผิดพลาด', err.response?.data?.message || 'สร้าง QR ไม่สำเร็จ');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+  // ขอ QR PromptPay ของค่าจอง (สร้างบิลค่าห้องให้ด้วย)
+  // ยิงตรงเลย ไม่ใช้ Alert (Alert จากในตัว Modal ไม่แสดงบน iOS → กดแล้ว QR ไม่ขึ้น)
+  // คำเตือน "5 นาที" แสดงอยู่แล้วในกล่องนับถอยหลังด้านบน (USER_FLOWS ข้อ 6/5)
+  const startPay = async () => {
+    try {
+      setLoading(true);
+      const res = await api.post(`/booking/${result.bookingId}/pay-now`);
+      if (res.data?.success) setQr(res.data.data);
+    } catch (err) {
+      Alert.alert('ผิดพลาด', err.response?.data?.message || 'สร้าง QR ไม่สำเร็จ');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // เลือกรูปสลิปจากคลังภาพ
