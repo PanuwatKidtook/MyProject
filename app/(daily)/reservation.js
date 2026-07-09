@@ -22,6 +22,8 @@ export default function DailyReservationScreen() {
 
   // ผลการจองสำเร็จ (เปิดโมดัลสำเร็จ + ชำระเงิน)
   const [bookingResult, setBookingResult] = useState(null);
+  // แสดงกล่องยืนยันนโยบายมัดจำในตัว Modal (ไม่ใช้ Alert ซ้อน Modal — iOS ไม่แสดง)
+  const [confirmingDeposit, setConfirmingDeposit] = useState(false);
 
   const [showInitialModal, setShowInitialModal] = useState(true);
   const [isDateSelected, setIsDateSelected] = useState(false);
@@ -139,6 +141,7 @@ export default function DailyReservationScreen() {
   // ยิงคำขอจองจริง (เรียกหลังผู้ใช้กดรับทราบนโยบายมัดจำแล้ว)
   const doBooking = async () => {
     if (!selectedRoom) return;
+    setConfirmingDeposit(false);
     setLoading(true);
     try {
       // token แนบอัตโนมัติจาก interceptor ใน lib/api.js
@@ -162,17 +165,16 @@ export default function DailyReservationScreen() {
     }
   };
 
-  // กดยืนยันจอง → เตือนนโยบายมัดจำก่อน 1 ครั้ง (USER_FLOWS ข้อ 4.5) → ค่อยจองจริง
+  // กดยืนยันจอง → แสดงกล่องเตือนนโยบายมัดจำในตัว Modal (USER_FLOWS ข้อ 4.5) → ค่อยจองจริง
   const handleConfirmBooking = () => {
     if (!selectedRoom) return;
-    Alert.alert(
-      'นโยบายการยกเลิก',
-      'หากยกเลิกการจองภายหลัง จะไม่ได้รับเงินมัดจำคืน\n\nยืนยันการจองห้องพักนี้?',
-      [
-        { text: 'ยกเลิก', style: 'cancel' },
-        { text: 'ยอมรับ และจองเลย', onPress: doBooking },
-      ]
-    );
+    setConfirmingDeposit(true);
+  };
+
+  // ปิด Modal รายละเอียดห้อง + รีเซ็ตสถานะยืนยัน
+  const closeRoomModal = () => {
+    setSelectedRoom(null);
+    setConfirmingDeposit(false);
   };
 
   const handleLogout = async () => {
@@ -423,7 +425,7 @@ export default function DailyReservationScreen() {
             <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
               <View style={{ position: 'relative' }}>
                 <Image source={{ uri: 'https://images.unsplash.com/photo-1618773928121-c32242e63f39?q=80&w=1000' }} style={{ width: '100%', height: 240 }} />
-                <TouchableOpacity onPress={() => setSelectedRoom(null)} style={{ position: 'absolute', top: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25, padding: 8 }}>
+                <TouchableOpacity onPress={closeRoomModal} style={{ position: 'absolute', top: 20, right: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25, padding: 8 }}>
                   <Ionicons name="close" size={22} color="white" />
                 </TouchableOpacity>
               </View>
@@ -453,20 +455,36 @@ export default function DailyReservationScreen() {
                   <Text style={{ color: '#475569', fontSize: 13, lineHeight: 20 }}>{t.desc}</Text>
                 </View>
                 {user ? (
-                  <TouchableOpacity
-                    disabled={loading}
-                    onPress={handleConfirmBooking}
-                    style={{ backgroundColor: '#0194F3', paddingVertical: 18, borderRadius: 22, alignItems: 'center', marginTop: 30, marginBottom: 40, elevation: 5 }}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="white" />
-                    ) : (
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <Text style={{ color: 'white', fontSize: 16, fontWeight: '900', marginRight: 8 }}>{t.confirmBtn}</Text>
-                        <Ionicons name="chevron-forward-circle" size={20} color="white" />
+                  confirmingDeposit ? (
+                    // กล่องยืนยันนโยบายมัดจำในตัว Modal (แทน Alert ที่ไม่แสดงบน iOS)
+                    <View style={{ marginTop: 24, marginBottom: 40, padding: 18, backgroundColor: '#FFF7ED', borderRadius: 20, borderWidth: 1, borderColor: '#FED7AA' }}>
+                      <Text style={{ color: '#9A3412', fontWeight: '800', fontSize: 14, marginBottom: 4 }}>⚠️ นโยบายการยกเลิก</Text>
+                      <Text style={{ color: '#C2410C', fontSize: 13, lineHeight: 20, marginBottom: 14 }}>หากยกเลิกการจองภายหลัง จะไม่ได้รับเงินมัดจำคืน — ยืนยันการจองห้องพักนี้?</Text>
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity disabled={loading} onPress={() => setConfirmingDeposit(false)} style={{ flex: 1, backgroundColor: '#F1F5F9', paddingVertical: 14, borderRadius: 16, alignItems: 'center' }}>
+                          <Text style={{ color: '#64748B', fontWeight: '800' }}>ยกเลิก</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity disabled={loading} onPress={doBooking} style={{ flex: 2, backgroundColor: '#0194F3', paddingVertical: 14, borderRadius: 16, alignItems: 'center', opacity: loading ? 0.6 : 1 }}>
+                          {loading ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '900' }}>ยอมรับ และจองเลย</Text>}
+                        </TouchableOpacity>
                       </View>
-                    )}
-                  </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      disabled={loading}
+                      onPress={handleConfirmBooking}
+                      style={{ backgroundColor: '#0194F3', paddingVertical: 18, borderRadius: 22, alignItems: 'center', marginTop: 30, marginBottom: 40, elevation: 5 }}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="white" />
+                      ) : (
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={{ color: 'white', fontSize: 16, fontWeight: '900', marginRight: 8 }}>{t.confirmBtn}</Text>
+                          <Ionicons name="chevron-forward-circle" size={20} color="white" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  )
                 ) : (
                   <TouchableOpacity
                     onPress={() => { setSelectedRoom(null); router.push('/(auth)/login'); }}
