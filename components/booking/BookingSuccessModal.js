@@ -31,6 +31,7 @@ export default function BookingSuccessModal({ visible, result, onGoHistory, onCl
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false); // แนบสลิปแล้ว
   const [remaining, setRemaining] = useState(0);
+  const [payError, setPayError] = useState(null);  // ข้อความ error ตอนสร้าง QR (โชว์ inline)
 
   // รีเซ็ต state ทุกครั้งที่เปิดโมดัลด้วยผลการจองใหม่
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function BookingSuccessModal({ visible, result, onGoHistory, onCl
       setQr(null);
       setSlip(null);
       setSubmitted(false);
+      setPayError(null);
       setRemaining(secondsLeft(result.holdExpiresAt));
     }
   }, [visible, result]);
@@ -69,10 +71,12 @@ export default function BookingSuccessModal({ visible, result, onGoHistory, onCl
   const startPay = async () => {
     try {
       setLoading(true);
+      setPayError(null);
       const res = await api.post(`/booking/${result.bookingId}/pay-now`);
-      if (res.data?.success) setQr(res.data.data);
+      if (res.data?.success && res.data.data?.qrImage) setQr(res.data.data);
+      else setPayError(res.data?.message || 'สร้าง QR ไม่สำเร็จ');
     } catch (err) {
-      Alert.alert('ผิดพลาด', err.response?.data?.message || 'สร้าง QR ไม่สำเร็จ');
+      setPayError(err.response?.data?.message || 'สร้าง QR ไม่สำเร็จ');
     } finally {
       setLoading(false);
     }
@@ -198,13 +202,22 @@ export default function BookingSuccessModal({ visible, result, onGoHistory, onCl
                   </TouchableOpacity>
                 </View>
               ) : (
-                <TouchableOpacity onPress={startPay} disabled={loading || expired} style={{ backgroundColor: '#D32F2F', paddingVertical: 16, borderRadius: 18, alignItems: 'center', marginVertical: 8, opacity: (loading || expired) ? 0.5 : 1 }}>
-                  {loading ? <ActivityIndicator color="white" /> : (
-                    <Text style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>
-                      {isMonthly ? '💳 ชำระมัดจำล็อกห้อง (QR PromptPay)' : '💳 ชำระค่าจอง (QR PromptPay)'}
-                    </Text>
+                <View>
+                  <TouchableOpacity onPress={startPay} disabled={loading || expired} style={{ backgroundColor: '#D32F2F', paddingVertical: 16, borderRadius: 18, alignItems: 'center', marginVertical: 8, opacity: (loading || expired) ? 0.5 : 1 }}>
+                    {loading ? <ActivityIndicator color="white" /> : (
+                      <Text style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>
+                        {isMonthly ? '💳 ชำระมัดจำล็อกห้อง (QR PromptPay)' : '💳 ชำระค่าจอง (QR PromptPay)'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                  {/* แสดง error inline (เช่น server ยังไม่ตั้ง PROMPTPAY_ID) แทน Alert ที่ไม่แสดงในตัว Modal */}
+                  {payError && (
+                    <View style={{ backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', borderRadius: 14, padding: 12, marginTop: 4 }}>
+                      <Text style={{ color: '#B91C1C', fontWeight: '800', fontSize: 13 }}>สร้าง QR ไม่สำเร็จ</Text>
+                      <Text style={{ color: '#DC2626', fontSize: 12, marginTop: 2 }}>{payError}</Text>
+                    </View>
                   )}
-                </TouchableOpacity>
+                </View>
               )
             ) : (
               <Text style={{ color: '#94A3B8', fontSize: 12, textAlign: 'center', marginVertical: 8 }}>

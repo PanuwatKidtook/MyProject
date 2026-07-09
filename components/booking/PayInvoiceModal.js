@@ -18,6 +18,7 @@ export default function PayInvoiceModal({ visible, invoice, onClose, onPaid }) {
   const [slip, setSlip] = useState(null);
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [payError, setPayError] = useState(null); // เหตุผลที่สร้าง QR ไม่ได้ (โชว์ inline)
 
   // ขอ QR ทุกครั้งที่เปิดโมดัลด้วยบิลใหม่
   useEffect(() => {
@@ -25,13 +26,15 @@ export default function PayInvoiceModal({ visible, invoice, onClose, onPaid }) {
     setQr(null);
     setSlip(null);
     setSubmitted(false);
+    setPayError(null);
     (async () => {
       try {
         setLoading(true);
         const res = await api.get(`/invoice/${invoice.invoice_id}/promptpay`);
-        if (res.data?.success) setQr(res.data.data);
+        if (res.data?.success && res.data.data?.qrImage) setQr(res.data.data);
+        else setPayError(res.data?.message || 'สร้าง QR ไม่สำเร็จ');
       } catch (err) {
-        Alert.alert('ผิดพลาด', err.response?.data?.message || 'สร้าง QR ไม่สำเร็จ');
+        setPayError(err.response?.data?.message || 'สร้าง QR ไม่สำเร็จ');
       } finally {
         setLoading(false);
       }
@@ -127,7 +130,10 @@ export default function PayInvoiceModal({ visible, invoice, onClose, onPaid }) {
                 </TouchableOpacity>
               </View>
             ) : (
-              <Text style={{ color: '#94A3B8', textAlign: 'center', marginVertical: 20 }}>ไม่สามารถสร้าง QR ได้</Text>
+              <View style={{ backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', borderRadius: 14, padding: 14, marginVertical: 12 }}>
+                <Text style={{ color: '#B91C1C', fontWeight: '800', fontSize: 13 }}>สร้าง QR ไม่สำเร็จ</Text>
+                <Text style={{ color: '#DC2626', fontSize: 12, marginTop: 2 }}>{payError || 'ไม่สามารถสร้าง QR ได้'}</Text>
+              </View>
             )}
           </ScrollView>
         </View>
