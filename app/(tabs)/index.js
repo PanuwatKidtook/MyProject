@@ -544,11 +544,19 @@ export default function HomeScreen() {
                 </TouchableOpacity>
 
 
-                <TouchableOpacity onPress={() => router.push('/invoice')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                <TouchableOpacity onPress={() => router.push('/(tenant)/mybills')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
                   <View style={{ backgroundColor: '#10B981', padding: 10, borderRadius: 12 }}>
                     <FontAwesome5 name="file-invoice-dollar" size={14} color="white" />
                   </View>
-                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>บิลค่าน้ำ ค่ไฟ และค่าเช่าห้อง</Text>
+                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>บิลค่าน้ำ ค่าไฟ และค่าเช่าห้อง</Text>
+                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => router.push('/(tenant)/mycontracts')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                  <View style={{ backgroundColor: '#6366F1', padding: 10, borderRadius: 12 }}>
+                    <FontAwesome5 name="file-signature" size={14} color="white" />
+                  </View>
+                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>สัญญาเช่าของฉัน</Text>
                   <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
                 </TouchableOpacity>
               </View>
