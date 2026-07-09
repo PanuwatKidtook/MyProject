@@ -39,7 +39,13 @@
           }
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "แอปต้องการเข้าถึงรูปภาพเพื่อแนบสลิปการโอนเงิน"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

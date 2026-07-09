@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Image, Modal,
-  ActivityIndicator, Alert, Animated, Platform, StatusBar, SafeAreaView, RefreshControl
+  ActivityIndicator, Alert, StatusBar, SafeAreaView, RefreshControl
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { Calendar } from 'react-native-calendars';
 import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../lib/api';
+import BookingSuccessModal from '../../components/booking/BookingSuccessModal';
 
 export default function DailyReservationScreen() {
   const router = useRouter();
@@ -19,6 +20,9 @@ export default function DailyReservationScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
 
+  // ผลการจองสำเร็จ (เปิดโมดัลสำเร็จ + ชำระเงิน)
+  const [bookingResult, setBookingResult] = useState(null);
+
   const [showInitialModal, setShowInitialModal] = useState(true);
   const [isDateSelected, setIsDateSelected] = useState(false);
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -27,8 +31,6 @@ export default function DailyReservationScreen() {
   const [showEndPicker, setShowEndPicker] = useState(false);
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-
-  const slideAnim = useRef(new Animated.Value(-200)).current;
 
   const text = {
     TH: {
@@ -129,39 +131,25 @@ export default function DailyReservationScreen() {
     setShowInitialModal(false);
   };
 
-  const triggerNotification = () => {
-    Animated.spring(slideAnim, {
-      toValue: Platform.OS === 'ios' ? 50 : 30,
-      useNativeDriver: true,
-      bounciness: 10
-    }).start();
-    setTimeout(() => hideNotification(), 5000);
-  };
-
-  const hideNotification = (callback) => {
-    Animated.timing(slideAnim, { toValue: -200, duration: 300, useNativeDriver: true }).start(() => {
-      if (callback) callback();
-    });
-  };
-
   const formatDateTH = (dateString) => {
     const d = new Date(dateString);
     return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
-  const handleConfirmBooking = async () => {
+  // ยิงคำขอจองจริง (เรียกหลังผู้ใช้กดรับทราบนโยบายมัดจำแล้ว)
+  const doBooking = async () => {
     if (!selectedRoom) return;
     setLoading(true);
     try {
       // token แนบอัตโนมัติจาก interceptor ใน lib/api.js
-      await api.post('/booking', {
+      const res = await api.post('/booking', {
         roomId: selectedRoom.id,
         startDate: startDate,
         endDate: endDate,
         rentType: 'daily',
       });
       setSelectedRoom(null);
-      triggerNotification();
+      setBookingResult(res.data); // เปิดโมดัลสำเร็จ + ชำระเงิน (นับถอยหลัง 5 นาที)
       fetchRooms();
     } catch (error) {
       Alert.alert("ขออภัย", error.response?.data?.message || t.fail);
@@ -170,6 +158,19 @@ export default function DailyReservationScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // กดยืนยันจอง → เตือนนโยบายมัดจำก่อน 1 ครั้ง (USER_FLOWS ข้อ 4.5) → ค่อยจองจริง
+  const handleConfirmBooking = () => {
+    if (!selectedRoom) return;
+    Alert.alert(
+      'นโยบายการยกเลิก',
+      'หากยกเลิกการจองภายหลัง จะไม่ได้รับเงินมัดจำคืน\n\nยืนยันการจองห้องพักนี้?',
+      [
+        { text: 'ยกเลิก', style: 'cancel' },
+        { text: 'ยอมรับ และจองเลย', onPress: doBooking },
+      ]
+    );
   };
 
   const handleLogout = async () => {
@@ -183,8 +184,8 @@ export default function DailyReservationScreen() {
     }
   };
 
-  // กรองเฉพาะห้องที่สถานะ 'ว่าง' — ไม่มี field floor ใน schema
-  const availableRooms = roomsData.filter(room => room.status === 'ว่าง');
+  // รายวัน: เฉพาะห้องว่างที่ "มีราคารายวัน" (price != null) — ตรงกับ Roomuser.jsx ฝั่ง y3
+  const availableRooms = roomsData.filter(room => room.status === 'ว่าง' && room.price != null);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#F8F9FB' }}>
@@ -360,22 +361,6 @@ export default function DailyReservationScreen() {
         </View>
       </Modal>
 
-      <Animated.View style={{
-        position: 'absolute', top: 80, left: 15, right: 15, zIndex: 10000, transform: [{ translateY: slideAnim }],
-        backgroundColor: 'white', borderRadius: 24, padding: 18, flexDirection: 'row', alignItems: 'center', elevation: 20, borderLeftWidth: 8, borderLeftColor: '#10B981'
-      }}>
-        <View style={{ backgroundColor: '#E3F6ED', borderRadius: 14, padding: 10, marginRight: 15 }}>
-          <Ionicons name="checkmark-done" size={26} color="#10B981" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontWeight: '800', fontSize: 16, color: '#1E293B' }}>{t.success}</Text>
-          <Text style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>{t.viewList}</Text>
-        </View>
-        <TouchableOpacity onPress={() => hideNotification(() => router.push('/(daily)/reservationlist'))} style={{ backgroundColor: '#0194F3', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14 }}>
-          <Text style={{ color: 'white', fontWeight: 'bold' }}>ประวัติ</Text>
-        </TouchableOpacity>
-      </Animated.View>
-
       <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#0194F3']} />}>
         <View style={{ height: 220, width: '100%', position: 'relative' }}>
           <Image source={{ uri: 'https://images.unsplash.com/photo-1590490359683-658d3d23f972?q=80&w=1000' }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
@@ -496,6 +481,14 @@ export default function DailyReservationScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* โมดัลจองสำเร็จ + ชำระค่าจอง (นับถอยหลัง 5 นาที + QR PromptPay + แนบสลิป) */}
+      <BookingSuccessModal
+        visible={bookingResult !== null}
+        result={bookingResult}
+        onGoHistory={() => { setBookingResult(null); router.push('/(tabs)/reservationlist'); }}
+        onClose={() => setBookingResult(null)}
+      />
     </View>
   );
 }
