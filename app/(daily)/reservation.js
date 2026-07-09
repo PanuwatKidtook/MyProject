@@ -149,8 +149,10 @@ export default function DailyReservationScreen() {
         rentType: 'daily',
       });
       setSelectedRoom(null);
-      setBookingResult(res.data); // เปิดโมดัลสำเร็จ + ชำระเงิน (นับถอยหลัง 5 นาที)
       fetchRooms();
+      // เปิดโมดัลสำเร็จ+ชำระเงินหลังโมดัลรายละเอียดห้องปิดเสร็จ
+      // (RN เปิด Modal 2 ตัวพร้อมกันไม่ได้ — ตัวที่สองจะไม่เด้งถ้าตัวแรกยังปิดไม่เสร็จ)
+      setTimeout(() => setBookingResult(res.data), 450);
     } catch (error) {
       Alert.alert("ขออภัย", error.response?.data?.message || t.fail);
       fetchRooms();
