@@ -36,7 +36,7 @@ export default function RegisterScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [phone_number, setPhoneNumber] = useState('');
-  const [user_role, setUserRole] = useState('user');
+  const [user_role, setUserRole] = useState('Daily_Tenant');
 
   const [errors, setErrors] = useState({
     full_name: false,
@@ -50,6 +50,8 @@ export default function RegisterScreen() {
       header: 'สร้างบัญชีใหม่', start: 'เริ่มต้นใช้งาน', sub: 'สมัครสมาชิกเพื่อจองหอพัก Around Loei ได้ง่ายขึ้น',
       name: 'ชื่อ-นามสกุล', namePlace: 'กรุณากรอกชื่อจริง', email: 'ชื่อผู้ใช้งาน (Username)', pass: 'รหัสผ่าน',
       phone: 'เบอร์โทรศัพท์', phonePlace: 'กรุณากรอกเบอร์โทรศัพท์',
+      roleLabel: 'ประเภทผู้เช่า', roleHint: 'เลือกไว้ล่วงหน้า เพื่อไม่ต้องเลือกซ้ำตอนจองห้องพัก',
+      roleDaily: 'รายวัน', roleMonthly: 'รายเดือน',
       terms: 'โปรดอ่านและทำความเข้าใจ', condition: ' เงื่อนไขการใช้งาน ', privacy: ' นโยบายความเป็นส่วนตัว ',
       btn: 'ยืนยันสมัครสมาชิก', haveAcc: 'มีบัญชีอยู่แล้ว? ', login: 'เข้าสู่ระบบ',
       errorFill: 'กรุณากรอกข้อมูลให้ครบถ้วน', success: 'สมัครสมาชิกสำเร็จ!', fail: 'เกิดข้อผิดพลาดในการสมัคร',
@@ -76,6 +78,8 @@ export default function RegisterScreen() {
       header: 'Create Account', start: 'Get Started', sub: 'Sign up to book Around Loei more easily',
       name: 'Full Name', namePlace: 'Enter your full name', email: 'Username', pass: 'Password',
       phone: 'Phone Number', phonePlace: 'Enter your phone number',
+      roleLabel: 'Tenant Type', roleHint: 'Choose ahead so you won\'t need to pick again when booking',
+      roleDaily: 'Daily', roleMonthly: 'Monthly',
       terms: 'Please read and understand', condition: ' Terms of Service ', privacy: ' Privacy Policy ',
       btn: 'Confirm Registration', haveAcc: 'Already have an account? ', login: 'Login',
       errorFill: 'Please fill in all fields', success: 'Registration Successful!', fail: 'Registration Failed',
@@ -149,7 +153,7 @@ export default function RegisterScreen() {
         password: password,
         full_name: full_name,
         phone_number: phone_number,
-        user_role: "Daily_Tenant",
+        user_role: user_role,
       });
 
       if (response.status === 200 || response.status === 201) {
@@ -279,10 +283,10 @@ export default function RegisterScreen() {
               }}
             />
 
-            <InputBox 
-              label={t.pass} 
-              icon="lock" 
-              placeholder="••••••••" 
+            <InputBox
+              label={t.pass}
+              icon="lock"
+              placeholder="••••••••"
               secureTextEntry={true}
               value={password}
               error={errors.password}
@@ -291,6 +295,56 @@ export default function RegisterScreen() {
                 if (text) setErrors(prev => ({ ...prev, password: false }));
               }}
             />
+
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#444', marginBottom: 8, marginLeft: 5 }}>
+                {t.roleLabel}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setUserRole('Daily_Tenant')}
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: user_role === 'Daily_Tenant' ? '#0194F3' : 'white',
+                    borderRadius: 18,
+                    height: 56,
+                    borderWidth: 1.5,
+                    borderColor: user_role === 'Daily_Tenant' ? '#0194F3' : '#E1E9F0',
+                  }}
+                >
+                  <Ionicons name="sunny-outline" size={18} color={user_role === 'Daily_Tenant' ? 'white' : '#0194F3'} style={{ marginRight: 8 }} />
+                  <Text style={{ fontWeight: 'bold', fontSize: 15, color: user_role === 'Daily_Tenant' ? 'white' : '#444' }}>
+                    {t.roleDaily}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => setUserRole('Monthly_Tenant')}
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: user_role === 'Monthly_Tenant' ? '#0194F3' : 'white',
+                    borderRadius: 18,
+                    height: 56,
+                    borderWidth: 1.5,
+                    borderColor: user_role === 'Monthly_Tenant' ? '#0194F3' : '#E1E9F0',
+                  }}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={user_role === 'Monthly_Tenant' ? 'white' : '#0194F3'} style={{ marginRight: 8 }} />
+                  <Text style={{ fontWeight: 'bold', fontSize: 15, color: user_role === 'Monthly_Tenant' ? 'white' : '#444' }}>
+                    {t.roleMonthly}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ fontSize: 12, color: '#999', marginTop: 8, marginLeft: 5 }}>{t.roleHint}</Text>
+            </View>
           </View>
 
           {/* ส่วนเงื่อนไขและ Checkbox ที่เพิ่มเข้ามาใหม่ */}

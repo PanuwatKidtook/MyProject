@@ -8,7 +8,6 @@ import { Calendar } from 'react-native-calendars';
 import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../lib/api';
-import BookingSuccessModal from '../../components/booking/BookingSuccessModal';
 
 export default function DailyReservationScreen() {
   const router = useRouter();
@@ -20,8 +19,6 @@ export default function DailyReservationScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
 
-  // ผลการจองสำเร็จ (เปิดโมดัลสำเร็จ + ชำระเงิน)
-  const [bookingResult, setBookingResult] = useState(null);
   // แสดงกล่องยืนยันนโยบายมัดจำในตัว Modal (ไม่ใช้ Alert ซ้อน Modal — iOS ไม่แสดง)
   const [confirmingDeposit, setConfirmingDeposit] = useState(false);
 
@@ -153,9 +150,22 @@ export default function DailyReservationScreen() {
       });
       setSelectedRoom(null);
       fetchRooms();
-      // เปิดโมดัลสำเร็จ+ชำระเงินหลังโมดัลรายละเอียดห้องปิดเสร็จ
-      // (RN เปิด Modal 2 ตัวพร้อมกันไม่ได้ — ตัวที่สองจะไม่เด้งถ้าตัวแรกยังปิดไม่เสร็จ)
-      setTimeout(() => setBookingResult(res.data), 450);
+      // จองสำเร็จ → พาไปหน้าชำระเงิน /bill แทนการเปิด Modal ซ้อน Modal
+      const b = res.data;
+      router.push({
+        pathname: '/bill',
+        params: {
+          bookingId: b.bookingId,
+          bookingRef: b.bookingRef,
+          roomNumber: b.roomNumber,
+          checkInDate: b.checkInDate,
+          checkOutDate: b.checkOutDate,
+          rentType: b.rentType,
+          totalPrice: b.totalPrice,
+          holdExpiresAt: b.holdExpiresAt || '',
+          emailSent: b.emailSent ? '1' : '0',
+        }
+      });
     } catch (error) {
       Alert.alert("ขออภัย", error.response?.data?.message || t.fail);
       fetchRooms();
@@ -296,76 +306,69 @@ export default function DailyReservationScreen() {
         </TouchableOpacity>
       </Modal>
 
-      <Modal visible={showInitialModal} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 20 }}>
-          <View style={{ backgroundColor: 'white', borderRadius: 30, padding: 25, maxHeight: '90%' }}>
-            <TouchableOpacity onPress={() => setShowInitialModal(false)} style={{ position: 'absolute', top: 20, right: 20, zIndex: 10, backgroundColor: '#F1F5F9', borderRadius: 20, padding: 8 }}>
-              <Ionicons name="close" size={20} color="#64748B" />
-            </TouchableOpacity>
-            <Text style={{ fontSize: 22, fontWeight: '800', color: '#1E293B', textAlign: 'center', marginBottom: 20 }}>{t.pickDateDaily}</Text>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <TouchableOpacity onPress={() => { setShowStartPicker(true); setShowEndPicker(false); }} style={{ flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 20, padding: 18, borderWidth: 1.5, borderColor: showStartPicker ? '#0194F3' : '#E2E8F0', alignItems: 'center' }}>
-                <View style={{ backgroundColor: '#E0F2FE', padding: 8, borderRadius: 12, marginRight: 15 }}>
-                  <Ionicons name="calendar-sharp" size={24} color="#0194F3" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '900' }}>CHECK-IN DATE</Text>
-                  <Text style={{ fontSize: 18, color: '#1E293B', fontWeight: '700', marginTop: 2 }}>{formatDateTH(startDate)}</Text>
-                </View>
-              </TouchableOpacity>
-              {showStartPicker && (
-                <View style={{ marginTop: 10, borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <Calendar
-                    current={startDate}
-                    minDate={new Date().toISOString().split('T')[0]}
-                    onDayPress={day => {
-                      setStartDate(day.dateString);
-                      setShowStartPicker(false);
-                      setShowEndPicker(true);
-                      if (day.dateString >= endDate) {
-                        const nextDay = new Date(day.timestamp);
-                        nextDay.setDate(nextDay.getDate() + 1);
-                        setEndDate(nextDay.toISOString().split('T')[0]);
-                      }
-                    }}
-                    markedDates={{ [startDate]: { selected: true, selectedColor: '#0194F3' } }}
-                    theme={{ todayTextColor: '#0194F3', selectedDayBackgroundColor: '#0194F3' }}
-                  />
-                </View>
-              )}
-              <View style={{ height: 12 }} />
-              <TouchableOpacity onPress={() => { setShowEndPicker(true); setShowStartPicker(false); }} style={{ flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 20, padding: 18, borderWidth: 1.5, borderColor: showEndPicker ? '#F43F5E' : '#E2E8F0', alignItems: 'center' }}>
-                <View style={{ backgroundColor: '#FFF1F2', padding: 8, borderRadius: 12, marginRight: 15 }}>
-                  <Ionicons name="exit-sharp" size={24} color="#F43F5E" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '900' }}>CHECK-OUT DATE</Text>
-                  <Text style={{ fontSize: 18, color: '#1E293B', fontWeight: '700', marginTop: 2 }}>{formatDateTH(endDate)}</Text>
-                </View>
-              </TouchableOpacity>
-              {showEndPicker && (
-                <View style={{ marginTop: 10, borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <Calendar
-                    current={endDate}
-                    minDate={startDate}
-                    onDayPress={day => {
-                      setEndDate(day.dateString);
-                      setShowEndPicker(false);
-                    }}
-                    markedDates={{ [endDate]: { selected: true, selectedColor: '#F43F5E' } }}
-                    theme={{ todayTextColor: '#F43F5E', selectedDayBackgroundColor: '#F43F5E' }}
-                  />
-                </View>
-              )}
-              <TouchableOpacity onPress={handleConfirmInitialDate} style={{ backgroundColor: '#0194F3', marginTop: 30, paddingVertical: 18, borderRadius: 25, alignItems: 'center', elevation: 5 }}>
-                <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>ยืนยันวันที่และค้นหาห้องว่าง</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
       <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#0194F3']} />}>
+        {showInitialModal ? (
+          <View style={{ padding: 25 }}>
+            <Text style={{ fontSize: 22, fontWeight: '800', color: '#1E293B', textAlign: 'center', marginBottom: 20 }}>{t.pickDateDaily}</Text>
+            <TouchableOpacity onPress={() => { setShowStartPicker(true); setShowEndPicker(false); }} style={{ flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 20, padding: 18, borderWidth: 1.5, borderColor: showStartPicker ? '#0194F3' : '#E2E8F0', alignItems: 'center' }}>
+              <View style={{ backgroundColor: '#E0F2FE', padding: 8, borderRadius: 12, marginRight: 15 }}>
+                <Ionicons name="calendar-sharp" size={24} color="#0194F3" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '900' }}>CHECK-IN DATE</Text>
+                <Text style={{ fontSize: 18, color: '#1E293B', fontWeight: '700', marginTop: 2 }}>{formatDateTH(startDate)}</Text>
+              </View>
+            </TouchableOpacity>
+            {showStartPicker && (
+              <View style={{ marginTop: 10, borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                <Calendar
+                  current={startDate}
+                  minDate={new Date().toISOString().split('T')[0]}
+                  onDayPress={day => {
+                    setStartDate(day.dateString);
+                    setShowStartPicker(false);
+                    setShowEndPicker(true);
+                    if (day.dateString >= endDate) {
+                      const nextDay = new Date(day.timestamp);
+                      nextDay.setDate(nextDay.getDate() + 1);
+                      setEndDate(nextDay.toISOString().split('T')[0]);
+                    }
+                  }}
+                  markedDates={{ [startDate]: { selected: true, selectedColor: '#0194F3' } }}
+                  theme={{ todayTextColor: '#0194F3', selectedDayBackgroundColor: '#0194F3' }}
+                />
+              </View>
+            )}
+            <View style={{ height: 12 }} />
+            <TouchableOpacity onPress={() => { setShowEndPicker(true); setShowStartPicker(false); }} style={{ flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 20, padding: 18, borderWidth: 1.5, borderColor: showEndPicker ? '#F43F5E' : '#E2E8F0', alignItems: 'center' }}>
+              <View style={{ backgroundColor: '#FFF1F2', padding: 8, borderRadius: 12, marginRight: 15 }}>
+                <Ionicons name="exit-sharp" size={24} color="#F43F5E" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '900' }}>CHECK-OUT DATE</Text>
+                <Text style={{ fontSize: 18, color: '#1E293B', fontWeight: '700', marginTop: 2 }}>{formatDateTH(endDate)}</Text>
+              </View>
+            </TouchableOpacity>
+            {showEndPicker && (
+              <View style={{ marginTop: 10, borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#E2E8F0' }}>
+                <Calendar
+                  current={endDate}
+                  minDate={startDate}
+                  onDayPress={day => {
+                    setEndDate(day.dateString);
+                    setShowEndPicker(false);
+                  }}
+                  markedDates={{ [endDate]: { selected: true, selectedColor: '#F43F5E' } }}
+                  theme={{ todayTextColor: '#F43F5E', selectedDayBackgroundColor: '#F43F5E' }}
+                />
+              </View>
+            )}
+            <TouchableOpacity onPress={handleConfirmInitialDate} style={{ backgroundColor: '#0194F3', marginTop: 30, paddingVertical: 18, borderRadius: 25, alignItems: 'center', elevation: 5 }}>
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>ยืนยันวันที่และค้นหาห้องว่าง</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+        <>
         <View style={{ height: 220, width: '100%', position: 'relative' }}>
           <Image source={{ uri: 'https://images.unsplash.com/photo-1590490359683-658d3d23f972?q=80&w=1000' }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} />
@@ -417,6 +420,8 @@ export default function DailyReservationScreen() {
             <Text style={{ marginLeft: 10, color: '#0194F3', fontWeight: 'bold' }}>{t.goBack}</Text>
           </TouchableOpacity>
         </View>
+        </>
+        )}
       </ScrollView>
 
       <Modal visible={selectedRoom !== null} transparent animationType="slide">
@@ -501,14 +506,6 @@ export default function DailyReservationScreen() {
           </View>
         </View>
       </Modal>
-
-      {/* โมดัลจองสำเร็จ + ชำระค่าจอง (นับถอยหลัง 5 นาที + QR PromptPay + แนบสลิป) */}
-      <BookingSuccessModal
-        visible={bookingResult !== null}
-        result={bookingResult}
-        onGoHistory={() => { setBookingResult(null); router.push('/(tabs)/reservationlist'); }}
-        onClose={() => setBookingResult(null)}
-      />
     </View>
   );
 }
