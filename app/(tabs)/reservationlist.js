@@ -1,6 +1,7 @@
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -19,17 +20,69 @@ import api from '../../lib/api';
 
 export default function ReservationListScreen() {
   const router = useRouter();
+  const [user, setUser] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState(null);
-  const [activeTab, setActiveTab] = useState('all');
-  const [historyTab, setHistoryTab] = useState('pending');
+  const [activeTab, setActiveTab] = useState(null);
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
   const [checkLoading, setCheckLoading] = useState(false);
   const [choiceTarget, setChoiceTarget] = useState(null); // ห้องรายเดือนที่กด "ดูรายละเอียด" → เลือกดูข้อมูลห้อง/ดูการชำระบิล
+  // เก็บผลยกเลิกไว้ในเครื่อง เผื่อ backend ไม่ได้อัปเดต bookingStatus ให้ตรงกันจริง ๆ หลังกดยกเลิก
+  const [cancelledOverrides, setCancelledOverrides] = useState({});
+
+  const CANCELLED_OVERRIDES_KEY = 'cancelledBookingOverrides';
+
+  // โรลของบัญชี กำหนดว่าเห็นได้แค่รายวันหรือรายเดือนเท่านั้น (ไม่มี "ทั้งหมด" อีกต่อไป)
+  const roleType = user?.role === 'Monthly_Tenant' ? 'monthly' : 'daily';
+
+  useFocusEffect(
+    useCallback(() => {
+      const loadUser = async () => {
+        try {
+          const userData = await AsyncStorage.getItem('userProfile');
+          setUser(userData ? JSON.parse(userData) : null);
+        } catch {
+          setUser(null);
+        }
+      };
+      loadUser();
+    }, [])
+  );
+
+  useEffect(() => {
+    const loadOverrides = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(CANCELLED_OVERRIDES_KEY);
+        setCancelledOverrides(raw ? JSON.parse(raw) : {});
+      } catch {
+        setCancelledOverrides({});
+      }
+    };
+    loadOverrides();
+  }, []);
+
+  // เก็บ "สแนปช็อต" ข้อมูลห้องไว้ทั้งชุด (ไม่ใช่แค่เหตุผล) เพราะ backend /checkbooking
+  // จะไม่ส่งรายการที่ถูกยกเลิกกลับมาให้อีกเลยหลังยกเลิกสำเร็จ — ถ้าอ้างอิงจาก `bookings`
+  // ที่ fetch ใหม่ รายการที่เพิ่งยกเลิกจะหายไปทันที ต้องเก็บข้อมูลที่จำเป็นไว้เองฝั่ง frontend
+  const saveCancelledOverride = async (item, reason) => {
+    setCancelledOverrides((prev) => {
+      const next = {
+        ...prev,
+        [item.bookingId]: {
+          roomNumber: item.roomNumber,
+          rentType: item.rentType,
+          reason,
+          cancelledAt: new Date().toISOString()
+        }
+      };
+      AsyncStorage.setItem(CANCELLED_OVERRIDES_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  };
 
   const fetchBookings = async () => {
     try {
@@ -102,19 +155,24 @@ export default function ReservationListScreen() {
     setCancelModalVisible(false);
     setCheckLoading(true);
 
+    const targetId = cancelTarget.bookingId;
+    const reasonText = cancelReason.trim();
+
     setTimeout(async () => {
       try {
-        await api.put(`/editBooking/${cancelTarget.bookingId}`, {
+        await api.put(`/editBooking/${targetId}`, {
           status: 'ยกเลิก',
-          cancelReason: cancelReason.trim(),
+          cancelReason: reasonText,
           cancelCheckStatus: 'approved'
         });
+
+        // จำผลยกเลิกไว้ในเครื่องทันที เพราะ backend จะไม่ส่งรายการนี้กลับมาให้อีกแล้วหลังยกเลิกสำเร็จ
+        await saveCancelledOverride(cancelTarget, reasonText);
 
         Alert.alert('ยกเลิกสำเร็จ', 'ระบบตรวจสอบเรียบร้อยและย้ายไปหน้า ยกเลิก แล้ว');
         setCancelTarget(null);
         setCancelReason('');
         fetchBookings();
-        setHistoryTab('cancelled');
         setActiveTab('history');
       } catch (err) {
         const errorMsg = err.response?.data?.message || 'ไม่สามารถยกเลิกได้ กรุณาลองใหม่';
@@ -136,7 +194,6 @@ export default function ReservationListScreen() {
       });
       Alert.alert('ตรวจสอบเสร็จแล้ว', 'ระบบย้ายรายการไปหน้า ยกเลิก เรียบร้อย');
       fetchBookings();
-      setHistoryTab('cancelled');
     } catch (err) {
       const errorMsg = err.response?.data?.message || 'ตรวจสอบไม่สำเร็จ';
       Alert.alert('ผิดพลาด', errorMsg);
@@ -145,22 +202,26 @@ export default function ReservationListScreen() {
     }
   };
 
+  // รายการที่ยัง active — backend กรอง "รอชำระมัดจำ"/"ยกเลิก" ออกให้อยู่แล้ว จึงกรองแค่ประเภทห้อง
   const filteredBookings = useMemo(() => {
-    if (activeTab === 'all') return bookings.filter(item => !isCancelledBooking(item));
-    if (activeTab === 'daily') return bookings.filter(item => item.rentType === 'daily' && !isCancelledBooking(item));
-    if (activeTab === 'monthly') return bookings.filter(item => item.rentType === 'monthly' && !isCancelledBooking(item));
-    return [];
-  }, [activeTab, bookings]);
+    return bookings.filter(item => item.rentType === roleType && !isCancelledBooking(item));
+  }, [roleType, bookings]);
 
-  const pendingHistory = useMemo(() => {
-    return bookings.filter(item => isPendingBooking(item) && !isCancelledBooking(item));
-  }, [bookings]);
-
-  const cancelledHistory = useMemo(() => {
-    return bookings.filter(item => isCancelledBooking(item));
-  }, [bookings]);
-
-  const historyBookings = historyTab === 'pending' ? pendingHistory : cancelledHistory;
+  // ประวัติยกเลิกการจอง — สร้างจาก cancelledOverrides ที่เก็บไว้ในเครื่องล้วน ๆ (ไม่อิง `bookings` จาก backend)
+  // เพราะ backend ไม่ส่งรายการที่ถูกยกเลิกกลับมาให้อีกเลย ถ้าอิงจาก `bookings` รายการที่เพิ่งยกเลิกจะหายไปทันที
+  const historyBookings = useMemo(() => {
+    return Object.entries(cancelledOverrides)
+      .map(([bookingId, ov]) => ({
+        bookingId,
+        roomNumber: ov.roomNumber,
+        rentType: ov.rentType,
+        bookingStatus: 'ยกเลิก',
+        cancelReason: ov.reason,
+        cancelledAt: ov.cancelledAt
+      }))
+      .filter(item => item.rentType === roleType)
+      .sort((a, b) => new Date(b.cancelledAt) - new Date(a.cancelledAt));
+  }, [cancelledOverrides, roleType]);
 
   const calcPrice = (item) => {
     if (!item.startDate || !item.endDate) return '-';
@@ -174,36 +235,21 @@ export default function ReservationListScreen() {
     return item.pricePerDay ? `฿${(days * item.pricePerDay).toLocaleString()}` : '-';
   };
 
-  const calcPriceNumber = (item) => {
-    if (!item.startDate || !item.endDate) return 0;
-    const days = Math.ceil((new Date(item.endDate) - new Date(item.startDate)) / 86400000) || 1;
-
-    if (item.rentType === 'monthly') {
-      const months = Math.ceil(days / 30) || 1;
-      return item.priceMonthly ? months * item.priceMonthly : 0;
-    }
-
-    return item.pricePerDay ? days * item.pricePerDay : 0;
+  const formatDate = (value) => {
+    if (!value) return '-';
+    return new Date(value).toLocaleDateString('th-TH', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
   };
 
-  const calcDays = (item) => {
-    if (!item.startDate || !item.endDate) return '-';
-    const days = Math.ceil((new Date(item.endDate) - new Date(item.startDate)) / 86400000) || 1;
-    return `${days} วัน`;
-  };
-
-  const calcMonths = (item) => {
-    if (!item.startDate || !item.endDate) return '-';
-    const days = Math.ceil((new Date(item.endDate) - new Date(item.startDate)) / 86400000) || 1;
-    const months = Math.ceil(days / 30) || 1;
-    return `${months} เดือน`;
-  };
-
-  const getHistoryBadge = (item) => {
-    if (isCancelledBooking(item)) {
-      return { text: 'ยกเลิก', bg: '#FEE2E2', color: '#EF4444' };
-    }
-    return { text: 'รอดำเนินการ', bg: '#FEF3C7', color: '#D97706' };
+  const formatTime = (value) => {
+    if (!value) return '-';
+    return new Date(value).toLocaleTimeString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   const renderBookingCard = (item, index) => (
@@ -287,8 +333,8 @@ export default function ReservationListScreen() {
     </View>
   );
 
+  // แถวข้อมูลใน "ประวัติยกเลิกการจอง" — โชว์เฉพาะห้องที่ถูกยกเลิกแล้ว ดูอย่างเดียว ไม่มีปุ่มกดทำอะไรต่อ
   const renderHistoryItem = (item, index) => {
-    const badge = getHistoryBadge(item);
     return (
       <View
         key={`${item.bookingId || index}`}
@@ -298,71 +344,29 @@ export default function ReservationListScreen() {
           <View>
             <Text style={styles.historyRoomText}>ห้อง {item.roomNumber}</Text>
             <Text style={styles.historyTypeText}>
-              {item.rentType === 'monthly' ? 'รายเดือน' : 'รายวัน'} • {badge.text}
+              {item.rentType === 'monthly' ? 'รายเดือน' : 'รายวัน'}
             </Text>
           </View>
-          <View style={[styles.historyPriceBadge, { backgroundColor: badge.bg }]}>
-            <Text style={[styles.historyPriceText, { color: badge.color }]}>{calcPrice(item)}</Text>
+          <View style={[styles.historyPriceBadge, { backgroundColor: '#FEE2E2' }]}>
+            <Text style={[styles.historyPriceText, { color: '#EF4444' }]}>ยกเลิก</Text>
           </View>
         </View>
 
         <View style={styles.historyDetailGrid}>
           <View style={styles.historyDetailBox}>
-            <Text style={styles.historyDetailLabel}>เข้าพัก</Text>
-            <Text style={styles.historyDetailValue}>
-              {item.startDate
-                ? new Date(item.startDate).toLocaleDateString('th-TH', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric'
-                  })
-                : '-'}
-            </Text>
+            <Text style={styles.historyDetailLabel}>วันที่ยกเลิก</Text>
+            <Text style={styles.historyDetailValue}>{formatDate(item.cancelledAt)}</Text>
           </View>
           <View style={styles.historyDetailBox}>
-            <Text style={styles.historyDetailLabel}>ถึง</Text>
-            <Text style={styles.historyDetailValue}>
-              {item.endDate
-                ? new Date(item.endDate).toLocaleDateString('th-TH', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric'
-                  })
-                : '-'}
-            </Text>
-          </View>
-          <View style={styles.historyDetailBox}>
-            <Text style={styles.historyDetailLabel}>ระยะเวลา</Text>
-            <Text style={styles.historyDetailValue}>
-              {item.rentType === 'monthly' ? calcMonths(item) : calcDays(item)}
-            </Text>
+            <Text style={styles.historyDetailLabel}>เวลาที่ยกเลิก</Text>
+            <Text style={styles.historyDetailValue}>{formatTime(item.cancelledAt)}</Text>
           </View>
         </View>
 
-        {isCancelledBooking(item) && item.cancelReason ? (
-          <View style={styles.reasonBox}>
-            <Text style={styles.reasonLabel}>เหตุผลยกเลิก</Text>
-            <Text style={styles.reasonValue}>{item.cancelReason}</Text>
-          </View>
-        ) : null}
-
-        {historyTab === 'pending' && (
-          <TouchableOpacity
-            onPress={() => openCancelModal(item)}
-            style={styles.historyButton}
-          >
-            <Text style={styles.historyButtonText}>ยกเลิกรายการนี้</Text>
-          </TouchableOpacity>
-        )}
-
-        {historyTab === 'cancelled' && (
-          <TouchableOpacity
-            onPress={() => setSelectedDetail(item)}
-            style={styles.historyButton}
-          >
-            <Text style={styles.historyButtonText}>ดูรายละเอียดรายการนี้</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.reasonBox}>
+          <Text style={styles.reasonLabel}>เหตุผลที่ยกเลิก</Text>
+          <Text style={styles.reasonValue}>{item.cancelReason || 'ไม่ระบุเหตุผล'}</Text>
+        </View>
       </View>
     );
   };
@@ -427,12 +431,10 @@ export default function ReservationListScreen() {
         }}
       >
         {[
-          { id: 'all', title: 'ทั้งหมด' },
-          { id: 'daily', title: 'รายวัน' },
-          { id: 'monthly', title: 'รายเดือน' },
-          { id: 'history', title: 'ประวัติทำรายการ' }
+          { id: roleType, title: roleType === 'monthly' ? 'รายเดือน' : 'รายวัน' },
+          { id: 'history', title: 'ประวัติยกเลิกการจอง' }
         ].map((tab) => {
-          const isActive = activeTab === tab.id;
+          const isActive = (activeTab || roleType) === tab.id;
           return (
             <TouchableOpacity
               key={tab.id}
@@ -465,55 +467,32 @@ export default function ReservationListScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
           <View style={styles.historyCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View style={styles.historyIconWrap}>
-                <Ionicons name="time-outline" size={20} color="#0194F3" />
+            <View style={styles.historyHeaderRow}>
+              <View style={[styles.historyIconWrap, { backgroundColor: '#EF4444' }]}>
+                <Ionicons name="close-circle-outline" size={22} color="white" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.historyTitle}>ประวัติทำรายการ</Text>
+                <Text style={styles.historyTitle}>ประวัติยกเลิกการจอง</Text>
                 <Text style={styles.historySub}>
-                  แยกเป็นรอดำเนินการและยกเลิก พร้อมปุ่มตรวจสอบในรายการรอดำเนินการ
+                  {roleType === 'monthly' ? 'ห้องพักรายเดือนที่คุณยกเลิกไปแล้ว' : 'ห้องพักรายวันที่คุณยกเลิกไปแล้ว'}
                 </Text>
               </View>
-            </View>
-
-            <View style={styles.historyStatsRow}>
-              <View style={styles.historyStatBox}>
-                <Text style={styles.historyStatNum}>{pendingHistory.length}</Text>
-                <Text style={styles.historyStatLabel}>รอดำเนินการ</Text>
+              <View style={styles.roleTag}>
+                <Ionicons
+                  name={roleType === 'monthly' ? 'calendar' : 'sunny'}
+                  size={12}
+                  color="#0284C7"
+                />
+                <Text style={styles.roleTagText}>{roleType === 'monthly' ? 'รายเดือน' : 'รายวัน'}</Text>
               </View>
-              <View style={styles.historyStatBox}>
-                <Text style={styles.historyStatNum}>{cancelledHistory.length}</Text>
-                <Text style={styles.historyStatLabel}>ยกเลิก</Text>
-              </View>
-            </View>
-
-            <View style={styles.historyInnerTabs}>
-              <TouchableOpacity
-                onPress={() => setHistoryTab('pending')}
-                style={[styles.historyInnerTab, historyTab === 'pending' && styles.historyInnerTabActive]}
-              >
-                <Text style={[styles.historyInnerTabText, historyTab === 'pending' && styles.historyInnerTabTextActive]}>
-                  รอดำเนินการ
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => setHistoryTab('cancelled')}
-                style={[styles.historyInnerTab, historyTab === 'cancelled' && styles.historyInnerTabActive]}
-              >
-                <Text style={[styles.historyInnerTabText, historyTab === 'cancelled' && styles.historyInnerTabTextActive]}>
-                  ยกเลิก
-                </Text>
-              </TouchableOpacity>
             </View>
           </View>
 
           {historyBookings.length === 0 ? (
             <View style={{ alignItems: 'center', marginTop: 100 }}>
-              <Ionicons name="receipt-outline" size={80} color="#CBD5E1" />
+              <Ionicons name="checkmark-done-circle-outline" size={80} color="#CBD5E1" />
               <Text style={{ fontSize: 16, color: '#94A3B8', marginTop: 15 }}>
-                ไม่มีรายการในหมวดนี้
+                ยังไม่มีการยกเลิกการจอง
               </Text>
             </View>
           ) : (
@@ -629,17 +608,10 @@ export default function ReservationListScreen() {
                 const item = choiceTarget;
                 setChoiceTarget(null);
                 router.push({
-                  pathname: '/bill',
+                  pathname: '/invoice',
                   params: {
                     bookingId: item.bookingId,
-                    bookingRef: item.bookingRef || `#${item.bookingId}`,
                     roomNumber: item.roomNumber,
-                    checkInDate: item.startDate,
-                    checkOutDate: item.endDate,
-                    rentType: item.rentType,
-                    totalPrice: calcPriceNumber(item),
-                    holdExpiresAt: item.holdExpiresAt || '',
-                    emailSent: '0',
                   }
                 });
               }}
@@ -758,20 +730,44 @@ const DetailRow = ({ label, value }) => (
 
 const styles = {
   historyCard: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: 'white',
     borderWidth: 1,
-    borderColor: '#BFDBFE',
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 18
+    borderColor: '#E2E8F0',
+    borderRadius: 24,
+    padding: 18,
+    marginBottom: 18,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2
+  },
+  historyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
   },
   historyIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'white',
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#0194F3',
     justifyContent: 'center',
     alignItems: 'center'
+  },
+  roleTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999
+  },
+  roleTagText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#0284C7'
   },
   historyTitle: {
     fontSize: 16,
@@ -779,61 +775,10 @@ const styles = {
     color: '#1E293B'
   },
   historySub: {
-    marginTop: 4,
-    color: '#475569',
-    fontSize: 13,
-    lineHeight: 20,
-    fontWeight: '500'
-  },
-  historyStatsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14
-  },
-  historyStatBox: {
-    flex: 1,
-    backgroundColor: 'white',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    alignItems: 'center'
-  },
-  historyStatNum: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#0194F3'
-  },
-  historyStatLabel: {
-    fontSize: 11,
+    marginTop: 2,
     color: '#64748B',
-    marginTop: 4,
-    fontWeight: '700'
-  },
-  historyInnerTabs: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14
-  },
-  historyInnerTab: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: '#F8FAFC',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0'
-  },
-  historyInnerTabActive: {
-    backgroundColor: '#E0F2FE',
-    borderColor: '#0194F3'
-  },
-  historyInnerTabText: {
-    fontSize: 13,
-    color: '#64748B',
-    fontWeight: '800'
-  },
-  historyInnerTabTextActive: {
-    color: '#0194F3'
+    fontSize: 12,
+    fontWeight: '600'
   },
   historyItemCard: {
     backgroundColor: 'white',
@@ -912,17 +857,6 @@ const styles = {
     color: '#9A3412',
     fontWeight: '600',
     lineHeight: 18
-  },
-  historyButton: {
-    backgroundColor: '#0194F3',
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: 'center'
-  },
-  historyButtonText: {
-    color: 'white',
-    fontSize: 13,
-    fontWeight: '800'
   },
   modalOverlay: {
     flex: 1,

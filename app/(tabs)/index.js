@@ -17,6 +17,7 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
+import api from '../../lib/api';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -28,6 +29,10 @@ export default function HomeScreen() {
 
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
   const [currentAction, setCurrentAction] = useState('check');
+
+  // ห้องที่แอดมินยืนยันให้แล้ว (ดึงสดจาก /checkbooking ทุกครั้งที่กลับมาหน้านี้
+  // เพราะ userProfile ใน AsyncStorage ไม่มีเลขห้อง และไม่ถูกรีเฟรชหลังแอดมินยืนยัน)
+  const [confirmedRoom, setConfirmedRoom] = useState(null);
 
   const { width } = useWindowDimensions();
   const windowWidth = width;
@@ -98,6 +103,32 @@ export default function HomeScreen() {
     ).start();
   }, []);
 
+  const normalizeStatus = (status) => String(status || '').trim().toLowerCase();
+
+  const isCancelledStatus = (status) => {
+    const s = normalizeStatus(status);
+    return s === 'ยกเลิก' || s === 'cancelled' || s === 'canceled';
+  };
+
+  const isPendingStatus = (status) => {
+    const s = normalizeStatus(status);
+    return s === 'รอชำระมัดจำ' || s === 'ยืนยันการจอง' || s === 'รอดำเนินการ';
+  };
+
+  // หาห้องที่ "ยืนยันแล้ว" จริง ๆ (ไม่ใช่รอชำระ/ยกเลิก) จากรายการจองล่าสุดของผู้ใช้
+  const fetchConfirmedRoom = useCallback(async () => {
+    try {
+      const response = await api.post('/checkbooking', {});
+      const bookings = response.data?.success && Array.isArray(response.data.data) ? response.data.data : [];
+      const confirmed = bookings.find(
+        (item) => !isCancelledStatus(item.bookingStatus) && !isPendingStatus(item.bookingStatus)
+      );
+      setConfirmedRoom(confirmed || null);
+    } catch (e) {
+      setConfirmedRoom(null);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       const checkUserStatus = async () => {
@@ -105,15 +136,17 @@ export default function HomeScreen() {
           const userData = await AsyncStorage.getItem('userProfile');
           if (userData) {
             setUser(JSON.parse(userData));
+            fetchConfirmedRoom();
           } else {
             setUser(null);
+            setConfirmedRoom(null);
           }
         } catch (e) {
           console.log('Error loading user data');
         }
       };
       checkUserStatus();
-    }, [])
+    }, [fetchConfirmedRoom])
   );
 
   const text = {
@@ -134,7 +167,7 @@ export default function HomeScreen() {
       fb: 'Facebook Fanpage',
       call: 'โทรสอบถามห้องว่าง',
       amenTitle: 'สิ่งอำนวยความสะดวก',
-      bookButton: 'เช็คห้องพัก',
+      bookButton: 'จองห้องพัก',
       bookingActiveButton: 'จองห้องพัก',
       logout: 'ออกจากระบบ',
       editProfile: 'แก้ไขโปรไฟล์ผู้ใช้',
@@ -142,7 +175,7 @@ export default function HomeScreen() {
       about: 'เกี่ยวกับเรา',
       welcome: 'Welcome to Around Loei',
       bookNow: 'จองเลย',
-      modalTitleCheck: 'เช็คสถานะห้องพัก',
+      modalTitleCheck: 'จองห้องพัก',
       modalTitleBook: 'เริ่มการจองห้องพัก',
       modalSubtitleCheck: 'เลือกประเภทห้องพักที่คุณต้องการเปิดดูข้อมูลครับ',
       modalSubtitleBook: 'เลือกประเภทห้องพักที่คุณต้องการทำรายการจองครับ',
@@ -176,7 +209,7 @@ export default function HomeScreen() {
       about: 'About Us',
       welcome: 'Welcome to Around Loei',
       bookNow: 'Book Now',
-      modalTitleCheck: 'Check Room Status',
+      modalTitleCheck: 'Start Booking Room',
       modalTitleBook: 'Start Booking Room',
       modalSubtitleCheck: 'Select the room type you would like to view.',
       modalSubtitleBook: 'Select the room type you want to reserve.',
@@ -188,6 +221,12 @@ export default function HomeScreen() {
   };
 
   const t = text[lang];
+
+  // เลขห้อง + ประเภทห้อง: ใช้ข้อมูลจากการจองที่แอดมินยืนยันแล้วก่อน (สดใหม่เสมอ)
+  // แล้วค่อย fallback ไปที่ userProfile เผื่อไม่มีการเชื่อมต่อ
+  const roomNumber = confirmedRoom?.roomNumber || user?.roomNo || null;
+  const rentType = confirmedRoom?.rentType
+    || (user?.role === 'Monthly_Tenant' ? 'monthly' : user?.role === 'Daily_Tenant' ? 'daily' : null);
 
   const handleLogout = async () => {
     await AsyncStorage.multiRemove(['token', 'userProfile']);
@@ -345,14 +384,16 @@ export default function HomeScreen() {
                   <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>👤 {t.editProfile}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  onPress={() => { setPressedMenuItem('repair'); router.push('/repair'); setIsMenuOpen(false); setPressedMenuItem(null); }}
-                  onPressIn={() => setPressedMenuItem('repair')}
-                  onPressOut={() => setPressedMenuItem(null)}
-                  style={menuItemStyle('repair')}
-                >
-                  <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>🛠️ {t.repair}</Text>
-                </TouchableOpacity>
+                {user.role !== 'Daily_Tenant' && (
+                  <TouchableOpacity
+                    onPress={() => { setPressedMenuItem('repair'); router.push('/repair'); setIsMenuOpen(false); setPressedMenuItem(null); }}
+                    onPressIn={() => setPressedMenuItem('repair')}
+                    onPressOut={() => setPressedMenuItem(null)}
+                    style={menuItemStyle('repair')}
+                  >
+                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>🛠️ {t.repair}</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   onPress={() => { setPressedMenuItem('about'); router.push('/about'); setIsMenuOpen(false); setPressedMenuItem(null); }}
@@ -506,7 +547,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={{ marginTop: -40, backgroundColor: 'white', borderTopLeftRadius: 40, borderTopRightRadius: 40, padding: 25 }}>
-          {(!user || (user.role !== 'Daily_Tenant' && user.role !== 'Monthly_Tenant') || !user.roomNo) && (
+          {!roomNumber && (
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => handleBookNow(user ? 'book' : 'check')}
@@ -529,9 +570,16 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
 
-          {user && user.role === 'Daily_Tenant' && user.roomNo && (
-            <View style={{ backgroundColor: '#F0F9FF', borderWidth: 1, borderColor: '#BAE6FD', padding: 20, borderRadius: 25, marginBottom: 20 }}>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: '#0369A1' }}>ห้องพักรายวันของคุณ: ห้อง {user.roomNo}</Text>
+          {rentType === 'daily' && roomNumber && (
+            <View style={styles.roomCardDaily}>
+              <View style={styles.roomCardHeaderRow}>
+                <Text style={styles.roomCardEyebrowDaily}>ห้องพักรายวันของคุณ</Text>
+                <View style={styles.confirmedBadgeLight}>
+                  <Ionicons name="checkmark-circle" size={13} color="#0284C7" />
+                  <Text style={styles.confirmedBadgeLightText}>ยืนยันแล้ว</Text>
+                </View>
+              </View>
+              <Text style={styles.roomCardNumberDaily}>ห้อง {roomNumber}</Text>
               <Text style={{ color: '#0284C7', fontSize: 12, marginBottom: 15, marginTop: 2, fontWeight: '600' }}>📅 รายการเข้าพักระยะสั้น (Daily Tenant)</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 15 }}>
                 <View style={{ flex: 1, backgroundColor: 'white', padding: 12, borderRadius: 15, alignItems: 'center', borderWidth: 1, borderColor: '#E0F2FE' }}>
@@ -555,29 +603,18 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {user && user.role === 'Monthly_Tenant' && user.roomNo && (
+          {rentType === 'monthly' && roomNumber && (
             <View style={{ marginBottom: 20 }}>
-              <View style={{ backgroundColor: '#0178C7', padding: 20, borderRadius: 25, marginBottom: 15 }}>
-                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: 'bold' }}>บัญชีลูกบ้านรายเดือน</Text>
-                <Text style={{ color: 'white', fontSize: 26, fontWeight: '900', marginTop: 2 }}>ห้อง {user.roomNo}</Text>
-              </View>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: '#1E293B', marginBottom: 10, marginTop: 5 }}>บริการและฟังก์ชันลูกบ้าน</Text>
-              <View style={{ gap: 10 }}>
-                <TouchableOpacity onPress={() => router.push('/repair')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <View style={{ backgroundColor: '#EF4444', padding: 10, borderRadius: 12 }}>
-                    <FontAwesome5 name="tools" size={14} color="white" />
+              <View style={styles.roomCardMonthly}>
+                <View style={styles.roomCardMonthlyGlow} pointerEvents="none" />
+                <View style={styles.roomCardHeaderRow}>
+                  <Text style={styles.roomCardEyebrowMonthly}>บัญชีลูกบ้านรายเดือน</Text>
+                  <View style={styles.confirmedBadgeDark}>
+                    <Ionicons name="checkmark-circle" size={13} color="#0178C7" />
+                    <Text style={styles.confirmedBadgeDarkText}>ยืนยันแล้ว</Text>
                   </View>
-                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>{t.repair}</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={() => router.push('/invoice')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <View style={{ backgroundColor: '#10B981', padding: 10, borderRadius: 12 }}>
-                    <FontAwesome5 name="file-invoice-dollar" size={14} color="white" />
-                  </View>
-                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>บิลค่าน้ำ ค่ไฟ และค่าเช่าห้อง</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-                </TouchableOpacity>
+                </View>
+                <Text style={styles.roomCardNumberMonthly}>ห้อง {roomNumber}</Text>
               </View>
             </View>
           )}
@@ -725,6 +762,95 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  roomCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  confirmedBadgeLight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'white',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  confirmedBadgeLightText: {
+    color: '#0284C7',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  confirmedBadgeDark: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'white',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  confirmedBadgeDarkText: {
+    color: '#0178C7',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  roomCardDaily: {
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    padding: 20,
+    borderRadius: 25,
+    marginBottom: 20,
+  },
+  roomCardEyebrowDaily: {
+    color: '#0369A1',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  roomCardNumberDaily: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#0369A1',
+    marginTop: 4,
+  },
+  roomCardMonthly: {
+    backgroundColor: '#0178C7',
+    padding: 20,
+    borderRadius: 25,
+    marginBottom: 15,
+    overflow: 'hidden',
+    elevation: 6,
+    shadowColor: '#0178C7',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  roomCardMonthlyGlow: {
+    position: 'absolute',
+    top: -40,
+    right: -30,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  roomCardEyebrowMonthly: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  roomCardNumberMonthly: {
+    color: 'white',
+    fontSize: 32,
+    fontWeight: '900',
+    marginTop: 4,
+    letterSpacing: 0.3,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',

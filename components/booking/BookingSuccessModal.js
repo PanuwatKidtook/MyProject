@@ -112,9 +112,7 @@ export default function BookingSuccessModal({ visible, result, onGoHistory, onCl
         name: slip.fileName || `slip_${Date.now()}.jpg`,
         type: slip.mimeType || 'image/jpeg',
       });
-      const res = await api.post('/payment', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/payment', form);
       if (res.data?.success) setSubmitted(true);
     } catch (err) {
       Alert.alert('ผิดพลาด', err.response?.data?.message || 'แจ้งชำระไม่สำเร็จ');

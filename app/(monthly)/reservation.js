@@ -63,7 +63,10 @@ export default function MonthlyReservationScreen() {
           setUser(userData ? JSON.parse(userData) : null);
         } catch { setUser(null); }
       })();
-    }, [])
+      // รีเฟรชผังชั้นทุกครั้งที่กลับเข้าหน้านี้ — กันโชว์ห้องเป็น "ไม่ว่าง" ค้าง
+      // เช่น กรณีจองไว้แล้วปล่อยให้หมดเวลา 5 นาที (ห้องถูกปล่อยคืนฝั่งเซิร์ฟเวอร์แล้วแต่หน้าจอยังไม่รู้)
+      if (isDateSelected) loadAvailability(startDate);
+    }, [isDateSelected, startDate])
   );
 
   // โหลดผังชั้น ณ วันเข้าพักที่เลือก (ใช้ทั้งตอนกดค้นหา และตอนเปลี่ยนวัน) — GET /rooms/availability?date=
@@ -193,6 +196,9 @@ export default function MonthlyReservationScreen() {
       <SafeAreaView style={{ backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#F1F5F9', zIndex: 10 }}>
         <View style={{ height: 65, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 }}>
+            <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+              <Ionicons name="arrow-back" size={18} color="#1E293B" />
+            </TouchableOpacity>
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: user ? '#10B981' : '#94A3B8', marginRight: 8 }} />
             <Text style={{ fontSize: 15, fontWeight: '700', color: '#1E293B' }} numberOfLines={1}>
               {user ? `${t.welcomeUser}${user.name || 'User'}` : t.welcomeGuest}

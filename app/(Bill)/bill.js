@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -48,6 +49,16 @@ export default function BillScreen() {
   const [submitted, setSubmitted] = useState(false);
   const [remaining, setRemaining] = useState(secondsLeft(holdExpiresAt));
   const [payError, setPayError] = useState(null);
+  const [slipError, setSlipError] = useState(null);
+  const [payTab, setPayTab] = useState('qr'); // 'qr' | 'manual' — สแกน QR หรือโอนด้วยเบอร์พร้อมเพย์เอง
+  const [paymentStarted, setPaymentStarted] = useState(false); // เริ่มนับถอยหลังเมื่อกดเลือกวิธีชำระ ไม่ใช่ตอนเข้าหน้า
+
+  // จัดเบอร์พร้อมเพย์ให้อ่านง่าย: เบอร์มือถือ 10 หลัก -> 08X-XXX-XXXX, อย่างอื่นคงรูปเดิม
+  const formatPromptpayId = (id) => {
+    const digits = String(id || '').replace(/\D/g, '');
+    if (digits.length === 10) return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+    return id || '-';
+  };
 
   useEffect(() => {
     if (!canPayNow || submitted) return;
@@ -65,10 +76,19 @@ export default function BillScreen() {
     return () => clearTimeout(t);
   }, [submitted]);
 
+  // หมดเวลาล็อกห้อง → โชว์สถานะปล่อยห้องคืนให้เห็นชัดๆ สักครู่ ก่อนพาไปหน้าประวัติการจอง
+  // (เซิร์ฟเวอร์มี cron ทำงานทุก 1 นาทีคอยลบการจองที่หมดเวลา + ปล่อยห้องคืนจริงอยู่แล้ว)
+  useEffect(() => {
+    if (!expired) return;
+    const t = setTimeout(() => router.replace('/reservationlist'), 3000);
+    return () => clearTimeout(t);
+  }, [expired]);
+
   const startPay = async () => {
     try {
       setLoading(true);
       setPayError(null);
+      setPaymentStarted(true);
       const res = await api.post(`/booking/${bookingId}/pay-now`);
       if (res.data?.success && res.data.data?.qrImage) setQr(res.data.data);
       else setPayError(res.data?.message || 'สร้าง QR ไม่สำเร็จ');
@@ -86,33 +106,56 @@ export default function BillScreen() {
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
-    if (!res.canceled && res.assets?.[0]) setSlip(res.assets[0]);
+    if (!res.canceled && res.assets?.[0]) {
+      setSlip(res.assets[0]);
+      setSlipError(null);
+    }
   };
 
   const submitSlip = async () => {
     if (!slip) {
-      Alert.alert('แจ้งเตือน', 'กรุณาแนบสลิปการโอนเงิน');
+      setSlipError('กรุณาแนบสลิปการโอนเงิน');
       return;
     }
     try {
       setLoading(true);
+      setSlipError(null);
       const form = new FormData();
       form.append('invoice_id', String(qr.invoiceId));
       form.append('payment_method', 'โอนเงิน');
-      form.append('slip', {
-        uri: slip.uri,
-        name: slip.fileName || `slip_${Date.now()}.jpg`,
-        type: slip.mimeType || 'image/jpeg',
-      });
-      const res = await api.post('/payment', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const fileName = slip.fileName || `slip_${Date.now()}.jpg`;
+      if (Platform.OS === 'web') {
+        // เว็บ: ต้องแนบเป็น Blob จริง — ส่ง {uri,name,type} แบบ RN ตรงๆ จะกลายเป็น "[object Object]" แทนไฟล์
+        const blob = await (await fetch(slip.uri)).blob();
+        form.append('slip', blob, fileName);
+      } else {
+        form.append('slip', {
+          uri: slip.uri,
+          name: fileName,
+          type: slip.mimeType || 'image/jpeg',
+        });
+      }
+      const res = await api.post('/payment', form);
       if (res.data?.success) setSubmitted(true);
+      else setSlipError(res.data?.message || 'แจ้งชำระไม่สำเร็จ');
     } catch (err) {
-      Alert.alert('ผิดพลาด', err.response?.data?.message || 'แจ้งชำระไม่สำเร็จ');
+      setSlipError(err.response?.data?.message || 'แจ้งชำระไม่สำเร็จ');
     } finally {
       setLoading(false);
     }
+  };
+
+  // กดกลับหน้าหลักโดยยังไม่ได้จ่าย → ยกเลิกการจองทันที ปล่อยห้องคืนทันที
+  // (ไม่งั้นห้องจะค้างสถานะ "มีผู้เช่า" จนกว่า cron จะเก็บกวาดตอนหมดเวลา 5 นาที ทำให้ผู้ใช้กลับมาจองใหม่ไม่เห็นห้อง)
+  const cancelAndGoHome = async () => {
+    if (canPayNow && !submitted && !expired) {
+      try {
+        await api.put(`/editBooking/${bookingId}`, { status: 'ยกเลิก' });
+      } catch (_err) {
+        // best-effort — ถ้ายกเลิกไม่สำเร็จ cron จะเก็บกวาดให้เองตอนหมดเวลา
+      }
+    }
+    router.replace('/(tabs)');
   };
 
   return (
@@ -120,7 +163,7 @@ export default function BillScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#0F7EE6" />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={styles.backButton}>
+        <TouchableOpacity onPress={cancelAndGoHome} style={styles.backButton}>
           <Ionicons name="arrow-back" size={22} color="white" />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -150,14 +193,25 @@ export default function BillScreen() {
               </View>
             </View>
             <Text style={styles.totalValue}>฿{Number(totalPrice).toLocaleString()}</Text>
-
-            {canPayNow && !submitted && (
-              <Text style={[styles.totalHint, expired && { color: '#FCA5A5' }]}>
-                {expired ? '⏱ หมดเวลาชำระแล้ว — การจองอาจถูกยกเลิกอัตโนมัติ' : `⏱ กรุณาชำระภายใน ${mmss}`}
-              </Text>
-            )}
           </View>
         </View>
+
+        {/* นับเวลาถอยหลังแบบตัวใหญ่ ให้ผู้ใช้เห็นชัดว่าเหลือเวลาชำระเท่าไหร่ — เริ่มโชว์หลังกดเลือกวิธีชำระ */}
+        {canPayNow && !submitted && paymentStarted && (
+          expired ? (
+            <View style={styles.countdownBoxExpired}>
+              <Ionicons name="alert-circle" size={22} color="#B91C1C" />
+              <Text style={styles.countdownExpiredTitle}>⏱ หมดเวลาชำระแล้ว</Text>
+              <Text style={styles.countdownExpiredSub}>ระบบกำลังยกเลิกการจองและปล่อยห้องคืนอัตโนมัติ กำลังพาไปหน้าประวัติการจอง...</Text>
+            </View>
+          ) : (
+            <View style={styles.countdownBox}>
+              <Text style={styles.countdownLabel}>⏱ กรุณาชำระเงินภายใน</Text>
+              <Text style={styles.countdownValue}>{mmss}</Text>
+              <Text style={styles.countdownSub}>มิฉะนั้นการจองจะถูกยกเลิกอัตโนมัติและปล่อยห้องคืน</Text>
+            </View>
+          )
+        )}
 
         <View style={styles.sectionTitleRow}>
           <Text style={styles.sectionTitle}>รายละเอียดการจอง</Text>
@@ -183,58 +237,111 @@ export default function BillScreen() {
         )}
 
         {canPayNow ? (
-          submitted ? (
+          expired ? null : submitted ? (
             <View style={styles.successBox}>
               <Ionicons name="checkmark-circle" size={26} color="#16A34A" />
               <Text style={styles.successText}>ส่งสลิปแล้ว · ยืนยันการจองแล้ว</Text>
               <Text style={styles.successSub}>กำลังพาไปหน้าประวัติการจอง...</Text>
             </View>
-          ) : qr ? (
-            <View style={styles.qrBox}>
-              <View style={styles.previewBadge}>
-                <Ionicons name="qr-code" size={16} color="#0284C7" />
-                <Text style={styles.previewBadgeText}>QR PromptPay</Text>
-              </View>
-              <Image source={{ uri: qr.qrImage }} style={styles.qrImage} />
-              <Text style={styles.qrAmount}>สแกนโอน ฿{Number(qr.amount).toLocaleString()}</Text>
-              <Text style={styles.qrHint}>โอนแล้วแนบสลิปด้านล่างเพื่อแจ้งชำระ</Text>
-
-              <TouchableOpacity onPress={pickSlip} style={styles.slipDrop}>
-                {slip ? (
-                  <Image source={{ uri: slip.uri }} style={styles.slipPreview} />
-                ) : (
-                  <View style={{ alignItems: 'center' }}>
-                    <Ionicons name="cloud-upload-outline" size={26} color="#64748B" />
-                    <Text style={styles.slipDropText}>แตะเพื่อแนบสลิปการโอนเงิน</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={submitSlip} disabled={loading} style={styles.confirmPayButton}>
-                {loading ? <ActivityIndicator color="white" /> : <Text style={styles.confirmPayText}>ส่งแจ้งชำระ</Text>}
-              </TouchableOpacity>
-            </View>
           ) : (
             <View style={{ marginHorizontal: 16 }}>
-              <TouchableOpacity
-                onPress={startPay}
-                disabled={loading || expired}
-                style={[styles.payNowButton, (loading || expired) && { opacity: 0.5 }]}
-              >
-                {loading ? <ActivityIndicator color="white" /> : (
-                  <>
-                    <Ionicons name="qr-code-outline" size={20} color="white" />
-                    <Text style={styles.payNowText}>
-                      {isMonthly ? 'ชำระมัดจำล็อกห้อง (QR PromptPay)' : 'ชำระค่าจอง (QR PromptPay)'}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              {payError && (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorTitle}>สร้าง QR ไม่สำเร็จ</Text>
-                  <Text style={styles.errorText}>{payError}</Text>
+              {/* เลือกวิธีชำระ 2 แบบ: สแกน QR พร้อมเพย์ / โอนด้วยเบอร์พร้อมเพย์เอง */}
+              <View style={styles.payTabRow}>
+                <TouchableOpacity
+                  onPress={() => setPayTab('qr')}
+                  style={[styles.payTabCard, payTab === 'qr' && styles.payTabCardActiveQr]}
+                >
+                  <View style={[styles.payTabIconBox, { backgroundColor: '#E0F2FE' }]}>
+                    <Ionicons name="qr-code-outline" size={20} color="#0284C7" />
+                  </View>
+                  <Text style={styles.payTabTitle}>QR พร้อมเพย์</Text>
+                  <Text style={styles.payTabSub}>สแกนจ่ายได้ทันที</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setPayTab('manual')}
+                  style={[styles.payTabCard, payTab === 'manual' && styles.payTabCardActiveManual]}
+                >
+                  <View style={[styles.payTabIconBox, { backgroundColor: '#DCFCE7' }]}>
+                    <Ionicons name="call-outline" size={20} color="#16A34A" />
+                  </View>
+                  <Text style={styles.payTabTitle}>เบอร์พร้อมเพย์</Text>
+                  <Text style={styles.payTabSub}>โอนเองผ่านแอปธนาคาร</Text>
+                </TouchableOpacity>
+              </View>
+
+              {qr ? (
+                <View style={styles.qrBox}>
+                  {payTab === 'qr' ? (
+                    <>
+                      <View style={styles.previewBadge}>
+                        <Ionicons name="qr-code" size={16} color="#0284C7" />
+                        <Text style={styles.previewBadgeText}>QR PromptPay</Text>
+                      </View>
+                      <Image source={{ uri: qr.qrImage }} style={styles.qrImage} />
+                    </>
+                  ) : (
+                    <>
+                      <View style={styles.previewBadge}>
+                        <Ionicons name="call" size={16} color="#16A34A" />
+                        <Text style={styles.previewBadgeText}>โอนด้วยเบอร์พร้อมเพย์</Text>
+                      </View>
+                      <View style={styles.promptpayNumberBox}>
+                        <Text style={styles.promptpayNumberText} selectable>
+                          {formatPromptpayId(qr.promptpayId)}
+                        </Text>
+                      </View>
+                      <Text style={styles.qrHint}>เปิดแอปธนาคาร เลือกโอนผ่านพร้อมเพย์ แล้วกรอกเบอร์นี้ (แตะค้างที่เบอร์เพื่อคัดลอก)</Text>
+                    </>
+                  )}
+                  <Text style={styles.qrAmount}>สแกนโอน ฿{Number(qr.amount).toLocaleString()}</Text>
+                  <Text style={styles.qrHint}>โอนแล้วแนบสลิปด้านล่างเพื่อแจ้งชำระ</Text>
+
+                  <TouchableOpacity onPress={pickSlip} style={styles.slipDrop}>
+                    {slip ? (
+                      <Image source={{ uri: slip.uri }} style={styles.slipPreview} />
+                    ) : (
+                      <View style={{ alignItems: 'center' }}>
+                        <Ionicons name="cloud-upload-outline" size={26} color="#64748B" />
+                        <Text style={styles.slipDropText}>แตะเพื่อแนบสลิปการโอนเงิน</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity onPress={submitSlip} disabled={loading} style={styles.confirmPayButton}>
+                    {loading ? <ActivityIndicator color="white" /> : <Text style={styles.confirmPayText}>ส่งแจ้งชำระ</Text>}
+                  </TouchableOpacity>
+
+                  {slipError && (
+                    <View style={styles.errorBox}>
+                      <Text style={styles.errorTitle}>แจ้งชำระไม่สำเร็จ</Text>
+                      <Text style={styles.errorText}>{slipError}</Text>
+                    </View>
+                  )}
                 </View>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    onPress={startPay}
+                    disabled={loading || expired}
+                    style={[styles.payNowButton, (loading || expired) && { opacity: 0.5 }]}
+                  >
+                    {loading ? <ActivityIndicator color="white" /> : (
+                      <>
+                        <Ionicons name={payTab === 'qr' ? 'qr-code-outline' : 'call-outline'} size={20} color="white" />
+                        <Text style={styles.payNowText}>
+                          {isMonthly ? 'ชำระมัดจำล็อกห้อง' : 'ชำระค่าจอง'}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  {payError && (
+                    <View style={styles.errorBox}>
+                      <Text style={styles.errorTitle}>สร้าง QR ไม่สำเร็จ</Text>
+                      <Text style={styles.errorText}>{payError}</Text>
+                    </View>
+                  )}
+                </>
               )}
             </View>
           )
@@ -370,11 +477,54 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginTop: 6,
   },
-  totalHint: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 13,
-    marginTop: 8,
-    fontWeight: '800',
+  countdownBox: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    borderRadius: 20,
+    padding: 16,
+    alignItems: 'center',
+  },
+  countdownLabel: {
+    color: '#9A3412',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  countdownValue: {
+    color: '#C2410C',
+    fontWeight: '900',
+    fontSize: 34,
+    fontVariant: ['tabular-nums'],
+  },
+  countdownSub: {
+    color: '#9A3412',
+    fontSize: 11,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  countdownBoxExpired: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 20,
+    padding: 16,
+    alignItems: 'center',
+  },
+  countdownExpiredTitle: {
+    color: '#B91C1C',
+    fontWeight: '900',
+    fontSize: 15,
+    marginTop: 6,
+  },
+  countdownExpiredSub: {
+    color: '#DC2626',
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: 'center',
   },
   sectionTitleRow: {
     paddingHorizontal: 16,
@@ -438,6 +588,63 @@ const styles = StyleSheet.create({
     color: '#16A34A',
     fontSize: 11,
     marginTop: 4,
+  },
+  payTabRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 14,
+  },
+  payTabCard: {
+    flex: 1,
+    borderRadius: 18,
+    padding: 14,
+    alignItems: 'center',
+    minHeight: 100,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  payTabCardActiveQr: {
+    borderColor: '#0194F3',
+    backgroundColor: '#EFF6FF',
+  },
+  payTabCardActiveManual: {
+    borderColor: '#10B981',
+    backgroundColor: '#F0FDF4',
+  },
+  payTabIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  payTabTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  payTabSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  promptpayNumberBox: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    marginTop: 4,
+  },
+  promptpayNumberText: {
+    color: '#15803D',
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   payNowButton: {
     backgroundColor: '#D32F2F',
