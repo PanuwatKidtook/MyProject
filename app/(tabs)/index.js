@@ -110,9 +110,10 @@ export default function HomeScreen() {
     return s === 'ยกเลิก' || s === 'cancelled' || s === 'canceled';
   };
 
+  // "ยืนยันการจอง" ไม่ถือเป็นสถานะรอ — ความหมายคือระบบยืนยันห้องให้แล้ว จึงควรขึ้นการ์ดห้องที่หน้าแรกได้เลย
   const isPendingStatus = (status) => {
     const s = normalizeStatus(status);
-    return s === 'รอชำระมัดจำ' || s === 'ยืนยันการจอง' || s === 'รอดำเนินการ';
+    return s === 'รอชำระมัดจำ' || s === 'รอดำเนินการ';
   };
 
   // หาห้องที่ "ยืนยันแล้ว" จริง ๆ (ไม่ใช่รอชำระ/ยกเลิก) จากรายการจองล่าสุดของผู้ใช้
@@ -231,6 +232,7 @@ export default function HomeScreen() {
   const handleLogout = async () => {
     await AsyncStorage.multiRemove(['token', 'userProfile']);
     setUser(null);
+    setConfirmedRoom(null);
     setIsMenuOpen(false);
     setIsProfileMenuOpen(false);
     setPressedMenuItem(null);
@@ -619,31 +621,33 @@ export default function HomeScreen() {
             </View>
           )}
 
-          <TouchableOpacity
-            onPress={() => router.push('/reservationlist')}
-            style={{
-              backgroundColor: '#FFF0E6',
-              padding: 18,
-              borderRadius: 20,
-              marginBottom: 12,
-              flexDirection: 'row',
-              alignItems: 'center',
-              borderWidth: 1,
-              borderColor: '#FFDAB9'
-            }}
-          >
-            <View style={{ backgroundColor: '#FF5E1F', padding: 8, borderRadius: 10 }}>
-              <Ionicons name="calendar" size={20} color="white" />
-            </View>
+          {user && (
+            <TouchableOpacity
+              onPress={() => router.push('/reservationlist')}
+              style={{
+                backgroundColor: '#FFF0E6',
+                padding: 18,
+                borderRadius: 20,
+                marginBottom: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: '#FFDAB9'
+              }}
+            >
+              <View style={{ backgroundColor: '#FF5E1F', padding: 8, borderRadius: 10 }}>
+                <Ionicons name="calendar" size={20} color="white" />
+              </View>
 
-            <View style={{ flex: 1, marginLeft: 15 }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#FF5E1F' }}>
-                {t.bookingList}
-              </Text>
-            </View>
+              <View style={{ flex: 1, marginLeft: 15 }}>
+                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#FF5E1F' }}>
+                  {t.bookingList}
+                </Text>
+              </View>
 
-            <Ionicons name="chevron-forward" size={20} color="#FF5E1F" />
-          </TouchableOpacity>
+              <Ionicons name="chevron-forward" size={20} color="#FF5E1F" />
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             onPress={() => router.push('/calendar')}

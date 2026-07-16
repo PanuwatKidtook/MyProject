@@ -31,6 +31,9 @@ export default function DailyReservationScreen() {
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
+  // 1 บัญชี จองห้องรายวันได้ทีละ 1 ห้อง — ถ้ามีการจองรายวันที่ยังไม่ยกเลิกอยู่แล้ว ต้องกดยกเลิกก่อนถึงจะจองห้องใหม่ได้
+  const [activeDailyBooking, setActiveDailyBooking] = useState(null);
+
   const text = {
     TH: {
       welcomeGuest: 'Around Loei (รายวัน)',
@@ -67,13 +70,34 @@ export default function DailyReservationScreen() {
 
   const t = text[lang];
 
+  // เช็คว่าบัญชีนี้มีห้องรายวันที่จองอยู่แล้ว (ยังไม่ยกเลิก) หรือไม่ — ถ้ามีต้องยกเลิกก่อนถึงจะจองห้องใหม่ได้
+  const fetchActiveDailyBooking = async () => {
+    try {
+      const response = await api.post('/checkbooking', {});
+      const bookings = response.data?.success && Array.isArray(response.data.data) ? response.data.data : [];
+      const active = bookings.find((item) => {
+        const status = String(item.bookingStatus || '').trim().toLowerCase();
+        const isCancelled = status === 'ยกเลิก' || status === 'cancelled' || status === 'canceled';
+        return item.rentType === 'daily' && !isCancelled;
+      });
+      setActiveDailyBooking(active || null);
+    } catch (e) {
+      setActiveDailyBooking(null);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       const checkUserStatus = async () => {
         try {
           const userData = await AsyncStorage.getItem('userProfile');
-          if (userData) setUser(JSON.parse(userData));
-          else setUser(null);
+          if (userData) {
+            setUser(JSON.parse(userData));
+            fetchActiveDailyBooking();
+          } else {
+            setUser(null);
+            setActiveDailyBooking(null);
+          }
         } catch (e) {
           setUser(null);
         }
@@ -183,6 +207,17 @@ export default function DailyReservationScreen() {
   // กดยืนยันจอง → แสดงกล่องเตือนนโยบายมัดจำในตัว Modal (USER_FLOWS ข้อ 4.5) → ค่อยจองจริง
   const handleConfirmBooking = () => {
     if (!selectedRoom) return;
+    if (activeDailyBooking) {
+      Alert.alert(
+        'จองได้แค่ 1 ห้องต่อบัญชี',
+        `คุณมีห้องพักรายวันที่จองไว้อยู่แล้ว (ห้อง ${activeDailyBooking.roomNumber}) กรุณายกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้`,
+        [
+          { text: 'ปิด', style: 'cancel' },
+          { text: 'ไปหน้ายกเลิก', onPress: () => { setSelectedRoom(null); router.push('/reservationlist'); } }
+        ]
+      );
+      return;
+    }
     setConfirmingDeposit(true);
   };
 
@@ -390,6 +425,20 @@ export default function DailyReservationScreen() {
         </View>
 
         <View style={{ padding: 25 }}>
+          {activeDailyBooking && (
+            <TouchableOpacity
+              onPress={() => router.push('/reservationlist')}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA', borderRadius: 20, padding: 16, marginBottom: 20 }}
+            >
+              <Ionicons name="alert-circle" size={22} color="#EA580C" style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#9A3412', fontWeight: '800', fontSize: 13 }}>คุณมีห้องพักรายวันที่จองไว้แล้ว (ห้อง {activeDailyBooking.roomNumber})</Text>
+                <Text style={{ color: '#C2410C', fontSize: 12, marginTop: 2 }}>ต้องยกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้ — แตะเพื่อไปหน้ายกเลิก</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#EA580C" />
+            </TouchableOpacity>
+          )}
+
           <View style={{ marginBottom: 20 }}>
             <Text style={{ fontSize: 22, fontWeight: '800', color: '#1E293B' }}>{t.selectTitle}</Text>
             <Text style={{ fontSize: 15, color: '#0194F3', fontWeight: '700', marginTop: 4 }}>
