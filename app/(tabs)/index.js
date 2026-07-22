@@ -581,7 +581,6 @@ export default function HomeScreen() {
                   <Text style={styles.confirmedBadgeLightText}>ยืนยันแล้ว</Text>
                 </View>
               </View>
-              <Text style={styles.roomCardNumberDaily}>ห้อง {roomNumber}</Text>
               <Text style={{ color: '#0284C7', fontSize: 12, marginBottom: 15, marginTop: 2, fontWeight: '600' }}>📅 รายการเข้าพักระยะสั้น (Daily Tenant)</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 15 }}>
                 <View style={{ flex: 1, backgroundColor: 'white', padding: 12, borderRadius: 15, alignItems: 'center', borderWidth: 1, borderColor: '#E0F2FE' }}>

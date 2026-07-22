@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Image, Modal,
   ActivityIndicator, Alert, StatusBar, SafeAreaView, RefreshControl
@@ -15,6 +15,8 @@ export default function DailyReservationScreen() {
   const [roomsData, setRoomsData] = useState([]);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [slowNotice, setSlowNotice] = useState(false); // แจ้งเตือนกลางจอเมื่อรอนานผิดปกติ (ระบบช้า/ค้าง)
+  const slowNoticeTimer = useRef(null);
   const [fetching, setFetching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
@@ -30,9 +32,6 @@ export default function DailyReservationScreen() {
   const [showEndPicker, setShowEndPicker] = useState(false);
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-
-  // 1 บัญชี จองห้องรายวันได้ทีละ 1 ห้อง — ถ้ามีการจองรายวันที่ยังไม่ยกเลิกอยู่แล้ว ต้องกดยกเลิกก่อนถึงจะจองห้องใหม่ได้
-  const [activeDailyBooking, setActiveDailyBooking] = useState(null);
 
   const text = {
     TH: {
@@ -70,22 +69,6 @@ export default function DailyReservationScreen() {
 
   const t = text[lang];
 
-  // เช็คว่าบัญชีนี้มีห้องรายวันที่จองอยู่แล้ว (ยังไม่ยกเลิก) หรือไม่ — ถ้ามีต้องยกเลิกก่อนถึงจะจองห้องใหม่ได้
-  const fetchActiveDailyBooking = async () => {
-    try {
-      const response = await api.post('/checkbooking', {});
-      const bookings = response.data?.success && Array.isArray(response.data.data) ? response.data.data : [];
-      const active = bookings.find((item) => {
-        const status = String(item.bookingStatus || '').trim().toLowerCase();
-        const isCancelled = status === 'ยกเลิก' || status === 'cancelled' || status === 'canceled';
-        return item.rentType === 'daily' && !isCancelled;
-      });
-      setActiveDailyBooking(active || null);
-    } catch (e) {
-      setActiveDailyBooking(null);
-    }
-  };
-
   useFocusEffect(
     useCallback(() => {
       const checkUserStatus = async () => {
@@ -93,10 +76,8 @@ export default function DailyReservationScreen() {
           const userData = await AsyncStorage.getItem('userProfile');
           if (userData) {
             setUser(JSON.parse(userData));
-            fetchActiveDailyBooking();
           } else {
             setUser(null);
-            setActiveDailyBooking(null);
           }
         } catch (e) {
           setUser(null);
@@ -147,6 +128,17 @@ export default function DailyReservationScreen() {
       fetchAllRooms();
     }
   }, [isDateSelected]);
+
+  // ระหว่างรอจองห้อง ถ้าเกิน 7 วิยังไม่เสร็จ ให้ขึ้นแจ้งเตือนว่าระบบกำลังช้า (ไม่ใช่แอปค้าง)
+  useEffect(() => {
+    if (loading) {
+      slowNoticeTimer.current = setTimeout(() => setSlowNotice(true), 7000);
+    } else {
+      clearTimeout(slowNoticeTimer.current);
+      setSlowNotice(false);
+    }
+    return () => clearTimeout(slowNoticeTimer.current);
+  }, [loading]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -207,17 +199,6 @@ export default function DailyReservationScreen() {
   // กดยืนยันจอง → แสดงกล่องเตือนนโยบายมัดจำในตัว Modal (USER_FLOWS ข้อ 4.5) → ค่อยจองจริง
   const handleConfirmBooking = () => {
     if (!selectedRoom) return;
-    if (activeDailyBooking) {
-      Alert.alert(
-        'จองได้แค่ 1 ห้องต่อบัญชี',
-        `คุณมีห้องพักรายวันที่จองไว้อยู่แล้ว (ห้อง ${activeDailyBooking.roomNumber}) กรุณายกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้`,
-        [
-          { text: 'ปิด', style: 'cancel' },
-          { text: 'ไปหน้ายกเลิก', onPress: () => { setSelectedRoom(null); router.push('/reservationlist'); } }
-        ]
-      );
-      return;
-    }
     setConfirmingDeposit(true);
   };
 
@@ -425,20 +406,6 @@ export default function DailyReservationScreen() {
         </View>
 
         <View style={{ padding: 25 }}>
-          {activeDailyBooking && (
-            <TouchableOpacity
-              onPress={() => router.push('/reservationlist')}
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA', borderRadius: 20, padding: 16, marginBottom: 20 }}
-            >
-              <Ionicons name="alert-circle" size={22} color="#EA580C" style={{ marginRight: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#9A3412', fontWeight: '800', fontSize: 13 }}>คุณมีห้องพักรายวันที่จองไว้แล้ว (ห้อง {activeDailyBooking.roomNumber})</Text>
-                <Text style={{ color: '#C2410C', fontSize: 12, marginTop: 2 }}>ต้องยกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้ — แตะเพื่อไปหน้ายกเลิก</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#EA580C" />
-            </TouchableOpacity>
-          )}
-
           <View style={{ marginBottom: 20 }}>
             <Text style={{ fontSize: 22, fontWeight: '800', color: '#1E293B' }}>{t.selectTitle}</Text>
             <Text style={{ fontSize: 15, color: '#0194F3', fontWeight: '700', marginTop: 4 }}>
@@ -496,6 +463,12 @@ export default function DailyReservationScreen() {
                   <View>
                     <Text style={{ fontSize: 28, fontWeight: '900', color: '#1E293B' }}>ห้อง {selectedRoom?.number}</Text>
                     <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 14, fontWeight: '600' }}>รายวันสุดหรู</Text>
+                    {selectedRoom?.typeName ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                        <Ionicons name="bed-outline" size={14} color="#0194F3" />
+                        <Text style={{ color: '#0194F3', marginLeft: 5, fontSize: 13, fontWeight: '700' }}>{selectedRoom.typeName}</Text>
+                      </View>
+                    ) : null}
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ fontSize: 26, fontWeight: '900', color: '#0194F3' }}>฿{selectedRoom?.price}</Text>
@@ -530,6 +503,12 @@ export default function DailyReservationScreen() {
                           {loading ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '900' }}>ยอมรับ และจองเลย</Text>}
                         </TouchableOpacity>
                       </View>
+                      {slowNotice && (
+                        <View style={{ marginTop: 14, padding: 12, backgroundColor: '#FEF3C7', borderRadius: 14, borderWidth: 1, borderColor: '#FDE68A', alignItems: 'center' }}>
+                          <Text style={{ color: '#92400E', fontWeight: '800', fontSize: 13, textAlign: 'center' }}>⏳ ระบบกำลังใช้เวลานานกว่าปกติ</Text>
+                          <Text style={{ color: '#B45309', fontSize: 12, marginTop: 4, textAlign: 'center' }}>กรุณารอสักครู่ ระบบกำลังพยายามทำรายการอยู่</Text>
+                        </View>
+                      )}
                     </View>
                   ) : (
                     <TouchableOpacity

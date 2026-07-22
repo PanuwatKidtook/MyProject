@@ -36,6 +36,7 @@ export default function RegisterScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [phone_number, setPhoneNumber] = useState('');
+  const [email, setEmail] = useState('');
   const [user_role, setUserRole] = useState('Daily_Tenant');
 
   const [errors, setErrors] = useState({
@@ -50,6 +51,7 @@ export default function RegisterScreen() {
       header: 'สร้างบัญชีใหม่', start: 'เริ่มต้นใช้งาน', sub: 'สมัครสมาชิกเพื่อจองหอพัก Around Loei ได้ง่ายขึ้น',
       name: 'ชื่อ-นามสกุล', namePlace: 'กรุณากรอกชื่อจริง', email: 'ชื่อผู้ใช้งาน (Username)', pass: 'รหัสผ่าน',
       phone: 'เบอร์โทรศัพท์', phonePlace: 'กรุณากรอกเบอร์โทรศัพท์',
+      emailLabel: 'อีเมล', emailPlace: 'กรุณากรอกอีเมล',
       roleLabel: 'ประเภทผู้เช่า', roleHint: 'เลือกไว้ล่วงหน้า เพื่อไม่ต้องเลือกซ้ำตอนจองห้องพัก',
       roleDaily: 'รายวัน', roleMonthly: 'รายเดือน',
       terms: 'โปรดอ่านและทำความเข้าใจ', condition: ' เงื่อนไขการใช้งาน ', privacy: ' นโยบายความเป็นส่วนตัว ',
@@ -78,6 +80,7 @@ export default function RegisterScreen() {
       header: 'Create Account', start: 'Get Started', sub: 'Sign up to book Around Loei more easily',
       name: 'Full Name', namePlace: 'Enter your full name', email: 'Username', pass: 'Password',
       phone: 'Phone Number', phonePlace: 'Enter your phone number',
+      emailLabel: 'Email', emailPlace: 'Enter your email',
       roleLabel: 'Tenant Type', roleHint: 'Choose ahead so you won\'t need to pick again when booking',
       roleDaily: 'Daily', roleMonthly: 'Monthly',
       terms: 'Please read and understand', condition: ' Terms of Service ', privacy: ' Privacy Policy ',
@@ -153,6 +156,7 @@ export default function RegisterScreen() {
         password: password,
         full_name: full_name,
         phone_number: phone_number,
+        email: email,
         user_role: user_role,
       });
 
@@ -281,6 +285,16 @@ export default function RegisterScreen() {
                 setPhoneNumber(text);
                 if (text) setErrors(prev => ({ ...prev, phone_number: false }));
               }}
+            />
+
+            <InputBox
+              label={t.emailLabel}
+              icon="mail"
+              placeholder={t.emailPlace}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
             />
 
             <InputBox

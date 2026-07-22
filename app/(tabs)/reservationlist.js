@@ -25,16 +25,12 @@ export default function ReservationListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState(null);
-  const [activeTab, setActiveTab] = useState(null);
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
   const [checkLoading, setCheckLoading] = useState(false);
+  const [cancelSuccessVisible, setCancelSuccessVisible] = useState(false);
   const [choiceTarget, setChoiceTarget] = useState(null); // ห้องรายเดือนที่กด "ดูรายละเอียด" → เลือกดูข้อมูลห้อง/ดูการชำระบิล
-  // เก็บผลยกเลิกไว้ในเครื่อง เผื่อ backend ไม่ได้อัปเดต bookingStatus ให้ตรงกันจริง ๆ หลังกดยกเลิก
-  const [cancelledOverrides, setCancelledOverrides] = useState({});
-
-  const CANCELLED_OVERRIDES_KEY = 'cancelledBookingOverrides';
 
   // โรลของบัญชี กำหนดว่าเห็นได้แค่รายวันหรือรายเดือนเท่านั้น (ไม่มี "ทั้งหมด" อีกต่อไป)
   const roleType = user?.role === 'Monthly_Tenant' ? 'monthly' : 'daily';
@@ -52,37 +48,6 @@ export default function ReservationListScreen() {
       loadUser();
     }, [])
   );
-
-  useEffect(() => {
-    const loadOverrides = async () => {
-      try {
-        const raw = await AsyncStorage.getItem(CANCELLED_OVERRIDES_KEY);
-        setCancelledOverrides(raw ? JSON.parse(raw) : {});
-      } catch {
-        setCancelledOverrides({});
-      }
-    };
-    loadOverrides();
-  }, []);
-
-  // เก็บ "สแนปช็อต" ข้อมูลห้องไว้ทั้งชุด (ไม่ใช่แค่เหตุผล) เพราะ backend /checkbooking
-  // จะไม่ส่งรายการที่ถูกยกเลิกกลับมาให้อีกเลยหลังยกเลิกสำเร็จ — ถ้าอ้างอิงจาก `bookings`
-  // ที่ fetch ใหม่ รายการที่เพิ่งยกเลิกจะหายไปทันที ต้องเก็บข้อมูลที่จำเป็นไว้เองฝั่ง frontend
-  const saveCancelledOverride = async (item, reason) => {
-    setCancelledOverrides((prev) => {
-      const next = {
-        ...prev,
-        [item.bookingId]: {
-          roomNumber: item.roomNumber,
-          rentType: item.rentType,
-          reason,
-          cancelledAt: new Date().toISOString()
-        }
-      };
-      AsyncStorage.setItem(CANCELLED_OVERRIDES_KEY, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  };
 
   const fetchBookings = async () => {
     try {
@@ -166,14 +131,10 @@ export default function ReservationListScreen() {
           cancelCheckStatus: 'approved'
         });
 
-        // จำผลยกเลิกไว้ในเครื่องทันที เพราะ backend จะไม่ส่งรายการนี้กลับมาให้อีกแล้วหลังยกเลิกสำเร็จ
-        await saveCancelledOverride(cancelTarget, reasonText);
-
-        Alert.alert('ยกเลิกสำเร็จ', 'ระบบตรวจสอบเรียบร้อยและย้ายไปหน้า ยกเลิก แล้ว');
         setCancelTarget(null);
         setCancelReason('');
         fetchBookings();
-        setActiveTab('history');
+        setCancelSuccessVisible(true);
       } catch (err) {
         const errorMsg = err.response?.data?.message || 'ไม่สามารถยกเลิกได้ กรุณาลองใหม่';
         Alert.alert('ผิดพลาด', errorMsg);
@@ -202,26 +163,10 @@ export default function ReservationListScreen() {
     }
   };
 
-  // รายการที่ยัง active — backend กรอง "รอชำระมัดจำ"/"ยกเลิก" ออกให้อยู่แล้ว จึงกรองแค่ประเภทห้อง
+  // รายการที่ยัง active ในหมวดห้องของโรลนี้ (ไม่รวมที่ถูกยกเลิกแล้ว)
   const filteredBookings = useMemo(() => {
     return bookings.filter(item => item.rentType === roleType && !isCancelledBooking(item));
   }, [roleType, bookings]);
-
-  // ประวัติยกเลิกการจอง — สร้างจาก cancelledOverrides ที่เก็บไว้ในเครื่องล้วน ๆ (ไม่อิง `bookings` จาก backend)
-  // เพราะ backend ไม่ส่งรายการที่ถูกยกเลิกกลับมาให้อีกเลย ถ้าอิงจาก `bookings` รายการที่เพิ่งยกเลิกจะหายไปทันที
-  const historyBookings = useMemo(() => {
-    return Object.entries(cancelledOverrides)
-      .map(([bookingId, ov]) => ({
-        bookingId,
-        roomNumber: ov.roomNumber,
-        rentType: ov.rentType,
-        bookingStatus: 'ยกเลิก',
-        cancelReason: ov.reason,
-        cancelledAt: ov.cancelledAt
-      }))
-      .filter(item => item.rentType === roleType)
-      .sort((a, b) => new Date(b.cancelledAt) - new Date(a.cancelledAt));
-  }, [cancelledOverrides, roleType]);
 
   const calcPrice = (item) => {
     if (!item.startDate || !item.endDate) return '-';
@@ -233,23 +178,6 @@ export default function ReservationListScreen() {
     }
 
     return item.pricePerDay ? `฿${(days * item.pricePerDay).toLocaleString()}` : '-';
-  };
-
-  const formatDate = (value) => {
-    if (!value) return '-';
-    return new Date(value).toLocaleDateString('th-TH', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    });
-  };
-
-  const formatTime = (value) => {
-    if (!value) return '-';
-    return new Date(value).toLocaleTimeString('th-TH', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
   };
 
   const renderBookingCard = (item, index) => (
@@ -333,44 +261,6 @@ export default function ReservationListScreen() {
     </View>
   );
 
-  // แถวข้อมูลใน "ประวัติยกเลิกการจอง" — โชว์เฉพาะห้องที่ถูกยกเลิกแล้ว ดูอย่างเดียว ไม่มีปุ่มกดทำอะไรต่อ
-  const renderHistoryItem = (item, index) => {
-    return (
-      <View
-        key={`${item.bookingId || index}`}
-        style={styles.historyItemCard}
-      >
-        <View style={styles.historyItemHeader}>
-          <View>
-            <Text style={styles.historyRoomText}>ห้อง {item.roomNumber}</Text>
-            <Text style={styles.historyTypeText}>
-              {item.rentType === 'monthly' ? 'รายเดือน' : 'รายวัน'}
-            </Text>
-          </View>
-          <View style={[styles.historyPriceBadge, { backgroundColor: '#FEE2E2' }]}>
-            <Text style={[styles.historyPriceText, { color: '#EF4444' }]}>ยกเลิก</Text>
-          </View>
-        </View>
-
-        <View style={styles.historyDetailGrid}>
-          <View style={styles.historyDetailBox}>
-            <Text style={styles.historyDetailLabel}>วันที่ยกเลิก</Text>
-            <Text style={styles.historyDetailValue}>{formatDate(item.cancelledAt)}</Text>
-          </View>
-          <View style={styles.historyDetailBox}>
-            <Text style={styles.historyDetailLabel}>เวลาที่ยกเลิก</Text>
-            <Text style={styles.historyDetailValue}>{formatTime(item.cancelledAt)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.reasonBox}>
-          <Text style={styles.reasonLabel}>เหตุผลที่ยกเลิก</Text>
-          <Text style={styles.reasonValue}>{item.cancelReason || 'ไม่ระบุเหตุผล'}</Text>
-        </View>
-      </View>
-    );
-  };
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
       <StatusBar barStyle="dark-content" />
@@ -420,85 +310,11 @@ export default function ReservationListScreen() {
         </TouchableOpacity>
       </View>
 
-      <View
-        style={{
-          flexDirection: 'row',
-          backgroundColor: 'white',
-          paddingHorizontal: 15,
-          paddingVertical: 10,
-          borderBottomWidth: 1,
-          borderBottomColor: '#E2E8F0'
-        }}
-      >
-        {[
-          { id: roleType, title: roleType === 'monthly' ? 'รายเดือน' : 'รายวัน' },
-          { id: 'history', title: 'ประวัติยกเลิกการจอง' }
-        ].map((tab) => {
-          const isActive = (activeTab || roleType) === tab.id;
-          return (
-            <TouchableOpacity
-              key={tab.id}
-              onPress={() => setActiveTab(tab.id)}
-              style={{
-                flex: 1,
-                paddingVertical: 10,
-                alignItems: 'center',
-                borderBottomWidth: 3,
-                borderBottomColor: isActive ? '#0194F3' : 'transparent'
-              }}
-            >
-              <Text style={{ fontSize: 14, fontWeight: 'bold', color: isActive ? '#0194F3' : '#64748B' }}>
-                {tab.title}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
       {loading && !refreshing ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" color="#0194F3" />
           <Text style={{ marginTop: 10, color: '#64748B' }}>กำลังโหลดข้อมูล...</Text>
         </View>
-      ) : activeTab === 'history' ? (
-        <ScrollView
-          contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        >
-          <View style={styles.historyCard}>
-            <View style={styles.historyHeaderRow}>
-              <View style={[styles.historyIconWrap, { backgroundColor: '#EF4444' }]}>
-                <Ionicons name="close-circle-outline" size={22} color="white" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.historyTitle}>ประวัติยกเลิกการจอง</Text>
-                <Text style={styles.historySub}>
-                  {roleType === 'monthly' ? 'ห้องพักรายเดือนที่คุณยกเลิกไปแล้ว' : 'ห้องพักรายวันที่คุณยกเลิกไปแล้ว'}
-                </Text>
-              </View>
-              <View style={styles.roleTag}>
-                <Ionicons
-                  name={roleType === 'monthly' ? 'calendar' : 'sunny'}
-                  size={12}
-                  color="#0284C7"
-                />
-                <Text style={styles.roleTagText}>{roleType === 'monthly' ? 'รายเดือน' : 'รายวัน'}</Text>
-              </View>
-            </View>
-          </View>
-
-          {historyBookings.length === 0 ? (
-            <View style={{ alignItems: 'center', marginTop: 100 }}>
-              <Ionicons name="checkmark-done-circle-outline" size={80} color="#CBD5E1" />
-              <Text style={{ fontSize: 16, color: '#94A3B8', marginTop: 15 }}>
-                ยังไม่มีการยกเลิกการจอง
-              </Text>
-            </View>
-          ) : (
-            historyBookings.map((item, index) => renderHistoryItem(item, index))
-          )}
-        </ScrollView>
       ) : (
         <ScrollView
           contentContainerStyle={{ padding: 20, paddingBottom: 120 }}
@@ -573,6 +389,21 @@ export default function ReservationListScreen() {
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#0194F3" />
             <Text style={styles.loadingText}>กำลังตรวจสอบ ไม่เกิน 2 นาที...</Text>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={cancelSuccessVisible} transparent animationType="fade" onRequestClose={() => setCancelSuccessVisible(false)}>
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingBox}>
+            <Ionicons name="checkmark-circle" size={50} color="#10B981" />
+            <Text style={[styles.loadingText, { marginTop: 14 }]}>ยกเลิกการจองเรียบร้อยแล้ว</Text>
+            <TouchableOpacity
+              onPress={() => setCancelSuccessVisible(false)}
+              style={{ backgroundColor: '#0194F3', paddingVertical: 12, paddingHorizontal: 32, borderRadius: 14, marginTop: 16 }}
+            >
+              <Text style={{ color: 'white', fontWeight: 'bold' }}>ตกลง</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -729,135 +560,6 @@ const DetailRow = ({ label, value }) => (
 );
 
 const styles = {
-  historyCard: {
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 24,
-    padding: 18,
-    marginBottom: 18,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2
-  },
-  historyHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12
-  },
-  historyIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#0194F3',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  roleTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#E0F2FE',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999
-  },
-  roleTagText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#0284C7'
-  },
-  historyTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#1E293B'
-  },
-  historySub: {
-    marginTop: 2,
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '600'
-  },
-  historyItemCard: {
-    backgroundColor: 'white',
-    borderRadius: 24,
-    padding: 16,
-    marginBottom: 14,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.05
-  },
-  historyItemHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 14
-  },
-  historyRoomText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#1E293B'
-  },
-  historyTypeText: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 4,
-    fontWeight: '600'
-  },
-  historyPriceBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999
-  },
-  historyPriceText: {
-    fontSize: 13,
-    fontWeight: '900'
-  },
-  historyDetailGrid: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14
-  },
-  historyDetailBox: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    padding: 10
-  },
-  historyDetailLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '700'
-  },
-  historyDetailValue: {
-    fontSize: 12,
-    color: '#1E293B',
-    fontWeight: '800',
-    marginTop: 5
-  },
-  reasonBox: {
-    backgroundColor: '#FFF7ED',
-    borderWidth: 1,
-    borderColor: '#FDBA74',
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 14
-  },
-  reasonLabel: {
-    fontSize: 11,
-    color: '#C2410C',
-    fontWeight: '800'
-  },
-  reasonValue: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#9A3412',
-    fontWeight: '600',
-    lineHeight: 18
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.55)',

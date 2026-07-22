@@ -52,6 +52,9 @@ export default function BillScreen() {
   const [slipError, setSlipError] = useState(null);
   const [payTab, setPayTab] = useState('qr'); // 'qr' | 'manual' — สแกน QR หรือโอนด้วยเบอร์พร้อมเพย์เอง
   const [paymentStarted, setPaymentStarted] = useState(false); // เริ่มนับถอยหลังเมื่อกดเลือกวิธีชำระ ไม่ใช่ตอนเข้าหน้า
+  // เวลาหมดอายุที่ใช้นับถอยหลังจริงบนหน้าจอ — ตั้งใหม่เป็น "ตอนนี้ + 5 นาที" ทุกครั้งที่กดเริ่มชำระ
+  // แทนที่จะยึดตาม holdExpiresAt ที่มาจากตอนสร้างการจอง (ซึ่งเวลาผ่านไปก่อนหน้านั้นแล้ว เลยเหลือไม่ครบ 5 นาที)
+  const [payDeadline, setPayDeadline] = useState(null);
 
   // จัดเบอร์พร้อมเพย์ให้อ่านง่าย: เบอร์มือถือ 10 หลัก -> 08X-XXX-XXXX, อย่างอื่นคงรูปเดิม
   const formatPromptpayId = (id) => {
@@ -62,9 +65,11 @@ export default function BillScreen() {
 
   useEffect(() => {
     if (!canPayNow || submitted) return;
-    const timer = setInterval(() => setRemaining(secondsLeft(holdExpiresAt)), 1000);
+    const effectiveExpiry = payDeadline || holdExpiresAt;
+    setRemaining(secondsLeft(effectiveExpiry));
+    const timer = setInterval(() => setRemaining(secondsLeft(effectiveExpiry)), 1000);
     return () => clearInterval(timer);
-  }, [canPayNow, submitted, holdExpiresAt]);
+  }, [canPayNow, submitted, holdExpiresAt, payDeadline]);
 
   const mmss = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
   const expired = canPayNow && !submitted && remaining <= 0;
@@ -89,6 +94,7 @@ export default function BillScreen() {
       setLoading(true);
       setPayError(null);
       setPaymentStarted(true);
+      setPayDeadline(new Date(Date.now() + 5 * 60 * 1000)); // ตรึงเป็น 5:00 เสมอ ไม่สุ่มตามเวลาที่เหลือจริง
       const res = await api.post(`/booking/${bookingId}/pay-now`);
       if (res.data?.success && res.data.data?.qrImage) setQr(res.data.data);
       else setPayError(res.data?.message || 'สร้าง QR ไม่สำเร็จ');

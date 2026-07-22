@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Image, Modal,
   ActivityIndicator, Alert, StatusBar, SafeAreaView, RefreshControl
@@ -38,6 +38,22 @@ export default function MonthlyReservationScreen() {
   const [detailRoom, setDetailRoom] = useState(null); // ห้องที่เปิดดูรายละเอียด
   const [loading, setLoading] = useState(false);       // ระหว่างส่งคำขอจอง
   const [confirmingDeposit, setConfirmingDeposit] = useState(false); // กล่องยืนยันมัดจำในตัว Modal
+  const [slowNotice, setSlowNotice] = useState(false); // แจ้งเตือนกลางจอเมื่อรอนานผิดปกติ (ระบบช้า/ค้าง)
+  const slowNoticeTimer = useRef(null);
+
+  // ระหว่างรอจองห้อง ถ้าเกิน 7 วิยังไม่เสร็จ ให้ขึ้นแจ้งเตือนว่าระบบกำลังช้า (ไม่ใช่แอปค้าง)
+  useEffect(() => {
+    if (loading) {
+      slowNoticeTimer.current = setTimeout(() => setSlowNotice(true), 7000);
+    } else {
+      clearTimeout(slowNoticeTimer.current);
+      setSlowNotice(false);
+    }
+    return () => clearTimeout(slowNoticeTimer.current);
+  }, [loading]);
+
+  // 1 บัญชี จองห้องรายเดือนได้ทีละ 1 ห้อง — ถ้ามีการจองรายเดือนที่ยังไม่ยกเลิกอยู่แล้ว ต้องกดยกเลิกก่อนถึงจะจองห้องใหม่ได้
+  const [activeMonthlyBooking, setActiveMonthlyBooking] = useState(null);
 
   const text = {
     TH: {
@@ -55,12 +71,34 @@ export default function MonthlyReservationScreen() {
   };
   const t = text[lang];
 
+  // เช็คว่าบัญชีนี้มีห้องรายเดือนที่จองอยู่แล้ว (ยังไม่ยกเลิก) หรือไม่ — ถ้ามีต้องยกเลิกก่อนถึงจะจองห้องใหม่ได้
+  const fetchActiveMonthlyBooking = async () => {
+    try {
+      const response = await api.post('/checkbooking', {});
+      const bookings = response.data?.success && Array.isArray(response.data.data) ? response.data.data : [];
+      const active = bookings.find((item) => {
+        const status = String(item.bookingStatus || '').trim().toLowerCase();
+        const isCancelled = status === 'ยกเลิก' || status === 'cancelled' || status === 'canceled';
+        return item.rentType === 'monthly' && !isCancelled;
+      });
+      setActiveMonthlyBooking(active || null);
+    } catch (e) {
+      setActiveMonthlyBooking(null);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       (async () => {
         try {
           const userData = await AsyncStorage.getItem('userProfile');
-          setUser(userData ? JSON.parse(userData) : null);
+          if (userData) {
+            setUser(JSON.parse(userData));
+            fetchActiveMonthlyBooking();
+          } else {
+            setUser(null);
+            setActiveMonthlyBooking(null);
+          }
         } catch { setUser(null); }
       })();
       // รีเฟรชผังชั้นทุกครั้งที่กลับเข้าหน้านี้ — กันโชว์ห้องเป็น "ไม่ว่าง" ค้าง
@@ -162,6 +200,17 @@ export default function MonthlyReservationScreen() {
   // กด "จองห้องนี้" → แสดงกล่องเตือนนโยบายมัดจำในตัว Modal (USER_FLOWS ข้อ 3.5) → ค่อยจองจริง
   const handleConfirmBooking = () => {
     if (!detailRoom) return;
+    if (activeMonthlyBooking) {
+      Alert.alert(
+        'จองได้แค่ 1 ห้องต่อบัญชี',
+        `คุณมีห้องพักรายเดือนที่จองไว้อยู่แล้ว (ห้อง ${activeMonthlyBooking.roomNumber}) กรุณายกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้`,
+        [
+          { text: 'ปิด', style: 'cancel' },
+          { text: 'ไปหน้ายกเลิก', onPress: () => { setDetailRoom(null); router.push('/reservationlist'); } }
+        ]
+      );
+      return;
+    }
     setConfirmingDeposit(true);
   };
 
@@ -285,6 +334,20 @@ export default function MonthlyReservationScreen() {
         </View>
 
         <View style={{ padding: 20 }}>
+          {activeMonthlyBooking && (
+            <TouchableOpacity
+              onPress={() => router.push('/reservationlist')}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF7ED', borderWidth: 1, borderColor: '#FED7AA', borderRadius: 20, padding: 16, marginBottom: 16 }}
+            >
+              <Ionicons name="alert-circle" size={22} color="#EA580C" style={{ marginRight: 10 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#9A3412', fontWeight: '800', fontSize: 13 }}>คุณมีห้องพักรายเดือนที่จองไว้แล้ว (ห้อง {activeMonthlyBooking.roomNumber})</Text>
+                <Text style={{ color: '#C2410C', fontSize: 12, marginTop: 2 }}>ต้องยกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้ — แตะเพื่อไปหน้ายกเลิก</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#EA580C" />
+            </TouchableOpacity>
+          )}
+
           {/* แถบวันเข้าพัก + ปุ่มเปลี่ยนวัน */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'white', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 16 }}>
             <View style={{ flex: 1 }}>
@@ -416,6 +479,12 @@ export default function MonthlyReservationScreen() {
                           {loading ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '900' }}>ยอมรับ และจองเลย</Text>}
                         </TouchableOpacity>
                       </View>
+                      {slowNotice && (
+                        <View style={{ marginTop: 14, padding: 12, backgroundColor: '#FEF3C7', borderRadius: 14, borderWidth: 1, borderColor: '#FDE68A', alignItems: 'center' }}>
+                          <Text style={{ color: '#92400E', fontWeight: '800', fontSize: 13, textAlign: 'center' }}>⏳ ระบบกำลังใช้เวลานานกว่าปกติ</Text>
+                          <Text style={{ color: '#B45309', fontSize: 12, marginTop: 4, textAlign: 'center' }}>กรุณารอสักครู่ ระบบกำลังพยายามทำรายการอยู่</Text>
+                        </View>
+                      )}
                     </View>
                   ) : (
                     <TouchableOpacity disabled={loading} onPress={handleConfirmBooking} style={{ backgroundColor: '#0194F3', paddingVertical: 18, borderRadius: 22, alignItems: 'center', marginTop: 25, marginBottom: 40, elevation: 5 }}>

@@ -6,6 +6,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -17,16 +18,48 @@ import {
   View
 } from 'react-native';
 
+// เดียวกับ Home: ใช้ตรวจว่าการจองนี้ "ยืนยันแล้ว" จริง ๆ (ไม่ใช่รอชำระ/ยกเลิก)
+const normalizeStatus = (status) => String(status || '').trim().toLowerCase();
+
+const isCancelledStatus = (status) => {
+  const s = normalizeStatus(status);
+  return s === 'ยกเลิก' || s === 'cancelled' || s === 'canceled';
+};
+
+const isPendingStatus = (status) => {
+  const s = normalizeStatus(status);
+  return s === 'รอชำระมัดจำ' || s === 'รอดำเนินการ';
+};
+
 export default function RepairScreen() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [roomNo, setRoomNo] = useState('');
+  const [confirmedRoom, setConfirmedRoom] = useState(null);
   const [problemType, setProblemType] = useState('');
   const [problemDetail, setProblemDetail] = useState('');
   const [urgent, setUrgent] = useState(false);
   const [contactPhone, setContactPhone] = useState('');
   const [contactLine, setContactLine] = useState('');
   const [preferredTime, setPreferredTime] = useState('');
+  const [justSubmitted, setJustSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // ตรวจสอบว่าผู้เช่ารายเดือนคนนี้จองห้องไว้หรือยัง (เช็คแบบเดียวกับหน้าแรก)
+  const fetchConfirmedRoom = useCallback(async () => {
+    try {
+      const response = await api.post('/checkbooking', {});
+      const bookings = response.data?.success && Array.isArray(response.data.data) ? response.data.data : [];
+      const confirmed = bookings.find(
+        (item) => !isCancelledStatus(item.bookingStatus) && !isPendingStatus(item.bookingStatus)
+      );
+      setConfirmedRoom(confirmed || null);
+      setRoomNo(confirmed?.roomNumber ? String(confirmed.roomNumber) : '');
+    } catch (e) {
+      setConfirmedRoom(null);
+      setRoomNo('');
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -36,11 +69,17 @@ export default function RepairScreen() {
           if (userData) {
             const parsed = JSON.parse(userData);
             setUser(parsed);
-            setRoomNo(parsed?.roomNo ? String(parsed.roomNo) : '');
             setContactPhone(parsed?.phone || '');
             setContactLine(parsed?.lineId || '');
+            if (parsed?.role === 'Monthly_Tenant') {
+              fetchConfirmedRoom();
+            } else {
+              setConfirmedRoom(null);
+              setRoomNo(parsed?.roomNo ? String(parsed.roomNo) : '');
+            }
           } else {
             setUser(null);
+            setConfirmedRoom(null);
             setRoomNo('');
             setContactPhone('');
             setContactLine('');
@@ -50,7 +89,7 @@ export default function RepairScreen() {
         }
       };
       loadUser();
-    }, [])
+    }, [fetchConfirmedRoom])
   );
 
   // backend ใช้ PascalCase เสมอ
@@ -73,6 +112,8 @@ export default function RepairScreen() {
   }, []);
 
   const submitRepair = async () => {
+    if (submitting || justSubmitted) return;
+
     // เฉพาะ Monthly_Tenant เท่านั้นที่แจ้งซ่อมได้ (backend มี monthlyTenantCheck)
     if (role !== 'Monthly_Tenant') {
       Alert.alert('ไม่มีสิทธิ์', 'การแจ้งซ่อมสำหรับผู้เช่ารายเดือนเท่านั้น');
@@ -87,6 +128,7 @@ export default function RepairScreen() {
       return;
     }
 
+    setSubmitting(true);
     try {
       // 1. ดึง booking ที่กำลังเข้าพักอยู่ — ต้องมี booking_id ก่อนส่งแจ้งซ่อม
       const bookingsRes = await api.post('/checkbooking', {});
@@ -98,19 +140,20 @@ export default function RepairScreen() {
         return;
       }
 
-      // 2. ส่งแจ้งซ่อมพร้อม booking_id
+      // 2. ส่งแจ้งซ่อมพร้อม booking_id และเลขห้องจากการจองจริง
       await api.post('/repair', {
         booking_id: activeBooking.bookingId,
+        room_number: activeBooking.roomNumber,
         problem_title: problemType,
         problem_details: problemDetail,
       });
 
-      Alert.alert('ส่งแจ้งซ่อมสำเร็จ', 'ระบบได้รับรายการแจ้งปัญหาของคุณแล้ว', [
-        { text: 'ตกลง', onPress: () => router.back() },
-      ]);
+      setJustSubmitted(true);
     } catch (err) {
       const msg = err.response?.data?.message || 'ส่งแจ้งซ่อมไม่สำเร็จ กรุณาลองใหม่';
       Alert.alert('ส่งไม่สำเร็จ', msg);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -244,10 +287,11 @@ export default function RepairScreen() {
               <Text style={styles.label}>เลขห้อง</Text>
               <TextInput
                 value={roomNo}
-                onChangeText={setRoomNo}
-                placeholder={user?.roomNo ? `เช่น ${user.roomNo}` : 'กรอกเลขห้อง'}
+                onChangeText={role === 'Monthly_Tenant' ? undefined : setRoomNo}
+                editable={role !== 'Monthly_Tenant'}
+                placeholder={role === 'Monthly_Tenant' ? '-' : (user?.roomNo ? `เช่น ${user.roomNo}` : 'กรอกเลขห้อง')}
                 placeholderTextColor="#94A3B8"
-                style={styles.input}
+                style={[styles.input, role === 'Monthly_Tenant' && styles.inputDisabled]}
               />
 
               {(role === 'Monthly_Tenant' || role === 'Daily_Tenant') && (
@@ -293,7 +337,7 @@ export default function RepairScreen() {
                   return (
                     <TouchableOpacity
                       key={item}
-                      onPress={() => setProblemType(item)}
+                      onPress={() => { setProblemType(item); setJustSubmitted(false); }}
                       style={[styles.chip, active && styles.chipActive]}
                     >
                       <Text style={[styles.chipText, active && styles.chipTextActive]}>
@@ -307,7 +351,7 @@ export default function RepairScreen() {
               <Text style={styles.label}>รายละเอียดปัญหา</Text>
               <TextInput
                 value={problemDetail}
-                onChangeText={setProblemDetail}
+                onChangeText={(text) => { setProblemDetail(text); setJustSubmitted(false); }}
                 placeholder='เช่น แอร์เสีย, ประตูล็อกไม่ได้, ปลั๊กไม่ทำงาน'
                 placeholderTextColor="#94A3B8"
                 style={[styles.input, styles.textArea]}
@@ -331,9 +375,16 @@ export default function RepairScreen() {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity onPress={submitRepair} style={styles.submitButton} activeOpacity={0.9}>
+              <TouchableOpacity
+                onPress={submitRepair}
+                disabled={submitting || justSubmitted}
+                style={[styles.submitButton, (submitting || justSubmitted) && styles.submitButtonDisabled]}
+                activeOpacity={0.9}
+              >
                 <Ionicons name="paper-plane" size={18} color="white" />
-                <Text style={styles.submitText}>ส่งแจ้งซ่อม</Text>
+                <Text style={styles.submitText}>
+                  {submitting ? 'กำลังส่ง...' : justSubmitted ? 'ส่งแล้ว' : 'ส่งแจ้งซ่อม'}
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -369,6 +420,25 @@ export default function RepairScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal visible={justSubmitted} transparent animationType="fade" onRequestClose={() => {}}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconWrap}>
+              <Ionicons name="checkmark-circle" size={40} color="#059669" />
+            </View>
+            <Text style={styles.modalTitle}>ส่งแจ้งซ่อมสำเร็จ</Text>
+            <Text style={styles.modalSub}>ระบบได้รับรายการแจ้งปัญหาของคุณแล้ว</Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              activeOpacity={0.9}
+              onPress={() => router.back()}
+            >
+              <Text style={styles.modalButtonText}>ตกลง</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -500,6 +570,19 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 18, fontWeight: '900', color: '#1E293B', flex: 1 },
   cardSub: { fontSize: 13, color: '#64748B', marginTop: 4, marginBottom: 14, fontWeight: '500' },
+  successBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  successBannerText: { color: '#059669', fontSize: 13, fontWeight: '700', flex: 1 },
   roleBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -526,6 +609,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 14,
     color: '#0F172A',
+  },
+  inputDisabled: {
+    backgroundColor: '#F1F5F9',
+    color: '#94A3B8',
   },
   contactGrid: {
     gap: 10,
@@ -580,7 +667,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  submitButtonDisabled: { backgroundColor: '#94A3B8' },
   submitText: { color: 'white', fontSize: 16, fontWeight: '900' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+  },
+  modalIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#ECFDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '900', color: '#1E293B', textAlign: 'center' },
+  modalSub: { fontSize: 13, color: '#64748B', marginTop: 6, textAlign: 'center', fontWeight: '500' },
+  modalButton: {
+    marginTop: 20,
+    backgroundColor: '#0194F3',
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+    borderRadius: 16,
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalButtonText: { color: 'white', fontSize: 15, fontWeight: '900' },
   timelineCard: {
     backgroundColor: 'white',
     borderRadius: 24,
