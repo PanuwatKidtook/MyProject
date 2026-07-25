@@ -34,10 +34,21 @@ export default function BillScreen() {
   const bookingRef = params.bookingRef;
   const checkInDate = params.checkInDate;
   const checkOutDate = params.checkOutDate;
+  const bookedAt = params.bookedAt || null; // เวลาที่จองจริง (จาก DB) — ต้องตรงกับหน้าประวัติ
   const rentType = params.rentType;
   const totalPrice = Number(params.totalPrice || 0);
   const holdExpiresAt = params.holdExpiresAt || null;
   const emailSent = params.emailSent === '1';
+
+  // จัดรูปแบบวันเดือนปี + เวลา (พ.ศ.) จาก timestamp ที่จองจริง — parse เอง กัน Hermes/timezone เพี้ยน
+  const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  const formatDateTime = (v) => {
+    if (!v) return '-';
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+    if (!m) return String(v);
+    const [, y, mo, d, hh, mm] = m;
+    return `${Number(d)} ${THAI_MONTHS[Number(mo) - 1]} ${Number(y) + 543} ${hh}:${mm} น.`;
+  };
 
   // โหมดจองหลายห้อง (รายวันสไตล์ Agoda) — bill รับ bookingIds เป็นรายการ แล้วรวมจ่ายครั้งเดียว
   const bookingIds = params.bookingIds ? String(params.bookingIds).split(',').filter(Boolean) : null;
@@ -198,8 +209,8 @@ export default function BillScreen() {
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.heroLabel}>{isBatch ? `ห้องพัก ${roomCount} ห้อง` : 'ห้องพัก'}</Text>
-              <Text style={styles.heroRoom}>{roomNumber}</Text>
+              <Text style={styles.heroLabel}>{isBatch ? 'จำนวนห้องที่จอง' : (isMonthly ? 'สถานะห้องพัก' : 'ห้องพัก')}</Text>
+              <Text style={[styles.heroRoom, (!isBatch && isMonthly) && { fontSize: 20 }]}>{isBatch ? `${roomCount} ห้อง` : (isMonthly ? 'ยืนยันที่เคาน์เตอร์' : roomNumber)}</Text>
               <Text style={styles.heroMonth}>{isMonthly ? 'ห้องพักรายเดือน' : 'ห้องพักรายวัน'}</Text>
             </View>
             <View style={styles.heroIconBox}>
@@ -240,9 +251,10 @@ export default function BillScreen() {
         </View>
 
         <View style={styles.billCard}>
-          <SummaryRow label={isBatch ? `ห้องพัก (${roomCount} ห้อง)` : 'ห้องพัก'} value={isBatch ? roomNumber : `ห้อง ${roomNumber}`} />
+          <SummaryRow label="ห้องพัก" value={isBatch ? `${roomCount} ห้อง` : (isMonthly ? 'รอยืนยันที่เคาน์เตอร์' : `ห้อง ${roomNumber}`)} />
           <SummaryRow label="วันเข้าพัก" value={checkInDate} />
           {!isMonthly && <SummaryRow label="วันออก" value={checkOutDate} />}
+          <SummaryRow label="เวลาที่จอง" value={formatDateTime(bookedAt)} />
           <View style={styles.detailDivider} />
           <SummaryRow
             label={isMonthly ? 'ยอดมัดจำล็อกห้อง' : 'ยอดรวมโดยประมาณ'}

@@ -162,7 +162,6 @@ export default function HomeScreen() {
       slogan: 'หอพักสบาย ใกล้ มรภ.เลย',
       desc: 'สัมผัสการใช้ชีวิตที่เหนือระดับกับ "Around Loei" หอพักราย-รายเดือน เดินทางสะดวก ใกล้ มรภ.เลย และแหล่งของกินครบครัน',
       bookingList: 'ประวัติการจองห้องพัก',
-      bookingCalendar: 'เช็คปฏิทินห้องพัก',
       repair: 'แจ้งซ่อมและแจ้งปัญหา',
       line: 'Line Official',
       fb: 'Facebook Fanpage',
@@ -196,7 +195,6 @@ export default function HomeScreen() {
       slogan: 'Cozy Living in Loei City',
       desc: 'Experience superior living at "Around Loei". New, clean, and convenient location near Loei Rajabhat University.',
       bookingList: 'My Bookings',
-      bookingCalendar: 'Check Room Calendar',
       repair: 'Maintenance Request',
       line: 'Line Official',
       fb: 'Facebook Fanpage',
@@ -228,6 +226,8 @@ export default function HomeScreen() {
   const roomNumber = confirmedRoom?.roomNumber || user?.roomNo || null;
   const rentType = confirmedRoom?.rentType
     || (user?.role === 'Monthly_Tenant' ? 'monthly' : user?.role === 'Daily_Tenant' ? 'daily' : null);
+  // เปิดเผยเลขห้องเฉพาะเมื่อพนักงานเช็คอินที่เคาน์เตอร์แล้ว (สถานะ 'กำลังเข้าพัก') — ก่อนหน้านั้น "รอยืนยัน"
+  const isRoomRevealed = normalizeStatus(confirmedRoom?.bookingStatus) === 'กำลังเข้าพัก';
 
   const handleLogout = async () => {
     await AsyncStorage.multiRemove(['token', 'userProfile']);
@@ -611,11 +611,11 @@ export default function HomeScreen() {
                 <View style={styles.roomCardHeaderRow}>
                   <Text style={styles.roomCardEyebrowMonthly}>บัญชีลูกบ้านรายเดือน</Text>
                   <View style={styles.confirmedBadgeDark}>
-                    <Ionicons name="checkmark-circle" size={13} color="#0178C7" />
-                    <Text style={styles.confirmedBadgeDarkText}>ยืนยันแล้ว</Text>
+                    <Ionicons name={isRoomRevealed ? 'checkmark-circle' : 'time-outline'} size={13} color="#0178C7" />
+                    <Text style={styles.confirmedBadgeDarkText}>{isRoomRevealed ? 'ยืนยันแล้ว' : 'รอยืนยัน'}</Text>
                   </View>
                 </View>
-                <Text style={styles.roomCardNumberMonthly}>ห้อง {roomNumber}</Text>
+                <Text style={[styles.roomCardNumberMonthly, !isRoomRevealed && { fontSize: 20 }]}>{isRoomRevealed ? `ห้อง ${roomNumber}` : 'รอยืนยันที่เคาน์เตอร์'}</Text>
               </View>
             </View>
           )}
@@ -646,35 +646,6 @@ export default function HomeScreen() {
 
               <Ionicons name="chevron-forward" size={20} color="#FF5E1F" />
             </TouchableOpacity>
-          )}
-
-          {/* ผู้เช่ารายเดือนไม่ต้องเช็คปฏิทินห้องว่าง (จองได้ทีละห้องอยู่แล้ว) — ซ่อนเมนูนี้; รายวันและผู้ที่ยังไม่ล็อกอินยังเห็นได้ */}
-          {user?.role !== 'Monthly_Tenant' && (
-          <TouchableOpacity
-            onPress={() => router.push('/calendar')}
-            style={{
-              backgroundColor: '#E8F5FF',
-              padding: 18,
-              borderRadius: 20,
-              marginBottom: 25,
-              flexDirection: 'row',
-              alignItems: 'center',
-              borderWidth: 1,
-              borderColor: '#BBDFFB'
-            }}
-          >
-            <View style={{ backgroundColor: '#0194F3', padding: 8, borderRadius: 10 }}>
-              <Ionicons name="calendar-outline" size={20} color="white" />
-            </View>
-
-            <View style={{ flex: 1, marginLeft: 15 }}>
-              <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0194F3' }}>
-                {t.bookingCalendar}
-              </Text>
-            </View>
-
-            <Ionicons name="chevron-forward" size={20} color="#0194F3" />
-          </TouchableOpacity>
           )}
 
           <View style={{ marginBottom: 20 }}>

@@ -9,15 +9,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../lib/api';
 
-// ชั้นของห้อง = เลขตัวแรกของเลขห้อง (102 → ชั้น 1) — ใช้จัดกลุ่มผังชั้น (ตรงกับฝั่งรายเดือน)
-const floorOf = (roomNumber) => String(roomNumber || '').charAt(0) || '?';
-
-// รายชื่อชั้นทั้งหมด เรียงจากน้อยไปมาก (['1','2','3'])
-function floorsOf(rooms) {
-  const set = new Set(rooms.map((r) => floorOf(r.number)));
-  return [...set].sort();
-}
-
 // แยกข้อมูลเตียง/จำนวนคนพักจากชื่อประเภทห้อง (typeName) — ไม่มีฟิลด์ capacity ใน DB
 // กติกา: ห้อง 3 เตียง เข้าพักได้ 3 คน · ห้องอื่นๆ เข้าพักได้ 2 คน
 function bedInfoOf(typeName) {
@@ -26,6 +17,32 @@ function bedInfoOf(typeName) {
   const beds = m ? Number(m[1]) : 1;
   const capacity = beds >= 3 ? 3 : 2;       // 3 เตียง = 3 คน, อื่นๆ = 2 คน
   return { label, beds, capacity };
+}
+
+// สิ่งอำนวยความสะดวกมาตรฐานของทุกห้อง (โชว์เป็นเช็กลิสต์ในการ์ด สไตล์ Agoda)
+const AMENITIES = ['ฟรี WiFi', 'เครื่องปรับอากาศ', 'ห้องน้ำส่วนตัว', 'ทีวีดาวเทียม', 'ตู้เย็น', 'ที่จอดรถ'];
+
+// รูปประกอบการ์ดแต่ละประเภท (สุ่มจากชุดรูปตามลำดับประเภท)
+const ROOM_IMAGES = [
+  'https://images.unsplash.com/photo-1611892440504-42a792e24d32?q=80&w=800',
+  'https://images.unsplash.com/photo-1590490360182-c33d57733427?q=80&w=800',
+  'https://images.unsplash.com/photo-1631049307264-da0ec9d70304?q=80&w=800',
+  'https://images.unsplash.com/photo-1566665797739-1674de7a421a?q=80&w=800',
+];
+
+// จัดกลุ่มห้องตามประเภท (label) — คืนอาร์เรย์การ์ด: ประเภท, ความจุ, รายการห้อง, จำนวนว่าง, ราคาต่ำสุด
+function groupByType(rooms) {
+  const map = new Map();
+  for (const r of rooms) {
+    const info = bedInfoOf(r.typeName);
+    if (!map.has(info.label)) map.set(info.label, { label: info.label, capacity: info.capacity, beds: info.beds, rooms: [] });
+    map.get(info.label).rooms.push(r);
+  }
+  return [...map.values()].map((g) => {
+    const availRooms = g.rooms.filter((r) => r.status === 'ว่าง');
+    const prices = availRooms.map((r) => Number(r.price || 0)).filter((p) => p > 0);
+    return { ...g, availableCount: availRooms.length, minPrice: prices.length ? Math.min(...prices) : 0 };
+  });
 }
 
 export default function DailyReservationScreen() {
@@ -50,7 +67,6 @@ export default function DailyReservationScreen() {
   const [showEndPicker, setShowEndPicker] = useState(false);
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [selectedFloor, setSelectedFloor] = useState('');
 
   // ---- ตัวเลือกสไตล์ Agoda: จำนวนผู้เข้าพัก / จำนวนห้อง / ประเภทเตียง ----
   const [guests, setGuests] = useState(2);          // จำนวนผู้เข้าพักทั้งหมด
@@ -186,6 +202,7 @@ export default function DailyReservationScreen() {
   const doBooking = async () => {
     if (selectedRoomIds.length === 0) return;
     setConfirmingDeposit(false);
+    setShowConfirm(false);   // ปิดกล่องยืนยันทันที แล้วโชว์ overlay หมุนโหลดเต็มจอระหว่างพาไปหน้าจ่ายเงิน
     setLoading(true);
     try {
       // token แนบอัตโนมัติจาก interceptor ใน lib/api.js — จองทุกห้องในทรานแซกชันเดียว
@@ -207,6 +224,7 @@ export default function DailyReservationScreen() {
           roomNumbers: (b.bookings || []).map((x) => x.roomNumber).join(', '),
           checkInDate: b.checkInDate,
           checkOutDate: b.checkOutDate,
+          bookedAt: b.bookedAt || '',
           rentType: b.rentType,
           totalPrice: b.totalPrice,
           holdExpiresAt: b.holdExpiresAt || '',
@@ -260,39 +278,56 @@ export default function DailyReservationScreen() {
 
   // รายวัน: ห้องที่ "มีราคารายวัน" (price != null) — โชว์เป็นผังชั้นแบบเดียวกับรายเดือน (ว่าง/ไม่ว่าง)
   const dailyRooms = roomsData.filter(room => room.price != null);
-  const floors = floorsOf(dailyRooms);
   // ประเภทเตียงทั้งหมด (จาก typeName) ไว้ทำ chip กรอง
   const bedTypes = [...new Set(dailyRooms.map((r) => bedInfoOf(r.typeName).label))];
   // จำนวนคืน (ใช้คิดยอดรวมพรีวิว)
   const nights = Math.max(1, Math.ceil(Math.abs(new Date(endDate) - new Date(startDate)) / 86400000));
-  // ห้องในชั้นที่เลือก + กรองตามประเภทเตียงที่เลือก
-  const floorRooms = dailyRooms
-    .filter((r) => floorOf(r.number) === selectedFloor)
+  // ห้องที่แสดงในผัง — ทุกห้อง กรองตามประเภทเตียงที่เลือก
+  const visibleRooms = dailyRooms
     .filter((r) => !bedFilter || bedInfoOf(r.typeName).label === bedFilter);
+  // จัดกลุ่มเป็นการ์ดตามประเภทห้อง (สไตล์ Agoda)
+  const roomTypes = groupByType(visibleRooms);
+
+  // เพิ่มห้องของประเภทนี้ 1 ห้อง (เลือกห้องว่างที่ยังไม่ถูกเลือก) — reuse toggleRoom เพื่อคงลิมิตจำนวนห้อง
+  const addRoomOfType = (group) => {
+    const next = group.rooms.find((r) => r.status === 'ว่าง' && !selectedRoomIds.includes(r.id));
+    if (next) toggleRoom(next.id);
+  };
+  // ลดห้องของประเภทนี้ 1 ห้อง (เอาห้องที่เลือกล่าสุดของประเภทนี้ออก)
+  const removeRoomOfType = (group) => {
+    const chosen = group.rooms.filter((r) => selectedRoomIds.includes(r.id));
+    if (chosen.length) toggleRoom(chosen[chosen.length - 1].id);
+  };
   // ห้องที่ถูกเลือกไว้ (ทุกชั้น) + ยอดรวมพรีวิว
   const selectedRooms = dailyRooms.filter((r) => selectedRoomIds.includes(r.id));
   const selectedTotal = selectedRooms.reduce((sum, r) => sum + Number(r.price || 0) * nights, 0);
   const selectedCapacity = selectedRooms.reduce((sum, r) => sum + bedInfoOf(r.typeName).capacity, 0);
 
-  // ให้ชั้นที่เลือกอยู่ในลิสต์เสมอ (ค่าเริ่มต้น = ชั้นแรก) เมื่อข้อมูลห้องเปลี่ยน
-  useEffect(() => {
-    setSelectedFloor((prev) => (floors.includes(prev) ? prev : (floors[0] || '')));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomsData]);
+  // กติกาความจุ: 1 ห้องพักได้สูงสุด 2 คน → จำนวนห้องต้องอยู่ในช่วง [ceil(คน/2), คน] เสมอ
+  const MAX_PER_ROOM = 2;
+  const MAX_ROOMS_PER_ACCOUNT = 5;                   // 1 บัญชีจองได้สูงสุด 5 ห้อง/การจอง (กันกักห้อง)
+  const roomsMin = Math.ceil(guests / MAX_PER_ROOM); // ห้องขั้นต่ำที่รองรับผู้เข้าพักได้
+  const roomsMax = Math.min(MAX_ROOMS_PER_ACCOUNT, guests); // ห้องได้ไม่เกินจำนวนคน และไม่เกินเพดานบัญชี
 
-  // ปรับจำนวนผู้เข้าพัก/ห้องแบบมีขอบเขต — เพิ่มคนแล้วแนะนำจำนวนห้องอัตโนมัติ (2 คน/ห้อง)
+  // ปรับจำนวนผู้เข้าพัก — แล้วดึงจำนวนห้องให้กลับมาอยู่ในช่วงที่สมเหตุสมผลอัตโนมัติ
   const changeGuests = (delta) => {
     setGuests((g) => {
       const next = Math.min(20, Math.max(1, g + delta));
-      setRoomsWanted((rw) => Math.max(rw, Math.ceil(next / 2)));
+      const lo = Math.ceil(next / MAX_PER_ROOM);
+      const hi = Math.min(MAX_ROOMS_PER_ACCOUNT, next);
+      setRoomsWanted((rw) => {
+        const clamped = Math.min(hi, Math.max(lo, rw));
+        setSelectedRoomIds((ids) => ids.slice(0, clamped)); // ตัดห้องที่เลือกเกินออก
+        return clamped;
+      });
       return next;
     });
   };
+  // ปรับจำนวนห้อง — ล็อกไม่ให้ต่ำกว่าที่ผู้เข้าพักต้องการ และไม่ให้เกินจำนวนคน
   const changeRooms = (delta) => {
     setRoomsWanted((rw) => {
-      const next = Math.min(10, Math.max(1, rw + delta));
-      // ลดจำนวนห้องต่ำกว่าที่เลือกไว้ → ตัดห้องที่เกินออก
-      setSelectedRoomIds((ids) => ids.slice(0, next));
+      const next = Math.min(roomsMax, Math.max(roomsMin, rw + delta));
+      setSelectedRoomIds((ids) => ids.slice(0, next)); // ลดห้อง → ตัดห้องที่เลือกเกินออก
       return next;
     });
   };
@@ -499,11 +534,11 @@ export default function DailyReservationScreen() {
                 </View>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <TouchableOpacity onPress={() => changeGuests(-1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' }}>
+                <TouchableOpacity disabled={guests <= 1} onPress={() => changeGuests(-1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', opacity: guests <= 1 ? 0.4 : 1 }}>
                   <Ionicons name="remove" size={18} color="#0194F3" />
                 </TouchableOpacity>
                 <Text style={{ width: 40, textAlign: 'center', fontSize: 17, fontWeight: '900', color: '#1E293B' }}>{guests}</Text>
-                <TouchableOpacity onPress={() => changeGuests(1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center' }}>
+                <TouchableOpacity disabled={guests >= 20} onPress={() => changeGuests(1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center', opacity: guests >= 20 ? 0.4 : 1 }}>
                   <Ionicons name="add" size={18} color="#0194F3" />
                 </TouchableOpacity>
               </View>
@@ -520,15 +555,26 @@ export default function DailyReservationScreen() {
                 </View>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <TouchableOpacity onPress={() => changeRooms(-1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center' }}>
+                <TouchableOpacity disabled={roomsWanted <= roomsMin} onPress={() => changeRooms(-1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', opacity: roomsWanted <= roomsMin ? 0.4 : 1 }}>
                   <Ionicons name="remove" size={18} color="#0194F3" />
                 </TouchableOpacity>
                 <Text style={{ width: 40, textAlign: 'center', fontSize: 17, fontWeight: '900', color: '#1E293B' }}>{roomsWanted}</Text>
-                <TouchableOpacity onPress={() => changeRooms(1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center' }}>
+                <TouchableOpacity disabled={roomsWanted >= roomsMax} onPress={() => changeRooms(1)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center', opacity: roomsWanted >= roomsMax ? 0.4 : 1 }}>
                   <Ionicons name="add" size={18} color="#0194F3" />
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* บอกกติกา/เหตุผลที่ปุ่มถูกล็อก */}
+            <Text style={{ fontSize: 11, color: roomsWanted >= MAX_ROOMS_PER_ACCOUNT ? '#F97316' : '#94A3B8', fontWeight: '600', marginTop: 8 }}>
+              {roomsWanted >= MAX_ROOMS_PER_ACCOUNT
+                ? `จองได้สูงสุด ${MAX_ROOMS_PER_ACCOUNT} ห้องต่อการจอง 1 ครั้ง — ต้องการมากกว่านี้ กรุณาติดต่อเจ้าหน้าที่`
+                : roomsWanted >= roomsMax
+                ? `จำนวนห้องได้ไม่เกินจำนวนผู้เข้าพัก (${guests}) — เพิ่มผู้เข้าพักหากต้องการห้องมากขึ้น`
+                : roomsWanted <= roomsMin
+                ? `ต้องมีอย่างน้อย ${roomsMin} ห้องเพื่อรองรับผู้เข้าพัก ${guests} คน (พักได้ ${MAX_PER_ROOM} คน/ห้อง)`
+                : `รองรับได้สูงสุด ${roomsWanted * MAX_PER_ROOM} คนใน ${roomsWanted} ห้อง`}
+            </Text>
 
             {/* ประเภทเตียง (จำแนกจากชื่อห้อง) */}
             {bedTypes.length > 0 && (
@@ -552,22 +598,6 @@ export default function DailyReservationScreen() {
             )}
           </View>
 
-          {/* คำอธิบายสี */}
-          <View style={{ flexDirection: 'row', gap: 16, marginBottom: 14 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#86EFAC', marginRight: 6 }} />
-              <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>ว่าง (แตะเพื่อเลือก)</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: '#0194F3', marginRight: 6 }} />
-              <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>เลือกแล้ว</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', marginRight: 6 }} />
-              <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>ไม่ว่าง</Text>
-            </View>
-          </View>
-
           {fetching ? (
             <ActivityIndicator size="large" color="#0194F3" style={{ marginTop: 30 }} />
           ) : dailyRooms.length === 0 ? (
@@ -576,71 +606,111 @@ export default function DailyReservationScreen() {
             </View>
           ) : (
             <>
-              {/* แท็บเลือกชั้น */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-                {floors.map((f) => {
-                  const active = selectedFloor === f;
-                  return (
-                    <TouchableOpacity key={f} onPress={() => setSelectedFloor(f)} style={{ paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: active ? '#0194F3' : '#F1F5F9' }}>
-                      <Text style={{ fontSize: 13, fontWeight: 'bold', color: active ? 'white' : '#64748B' }}>ชั้น {f}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* ผังห้องของชั้นที่เลือก — แตะเพื่อเลือกหลายห้อง · ไม่แสดงเลขห้อง */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                {floorRooms.map((room) => {
-                  const available = room.status === 'ว่าง';
-                  const selected = selectedRoomIds.includes(room.id);
-                  const info = bedInfoOf(room.typeName);
-                  const bg = !available ? '#FEF2F2' : selected ? '#0194F3' : '#F0FDF4';
-                  const border = !available ? '#FECACA' : selected ? '#0194F3' : '#A7F3D0';
-                  const priceColor = selected ? 'white' : '#15803D';
-                  return (
-                    <TouchableOpacity
-                      key={room.id}
-                      disabled={!available}
-                      activeOpacity={0.85}
-                      onPress={() => toggleRoom(room.id)}
-                      style={{
-                        width: '30.33%', margin: '1.5%', height: 128, borderRadius: 20,
-                        justifyContent: 'center', alignItems: 'center', borderWidth: 1.5,
-                        paddingHorizontal: 6, position: 'relative',
-                        backgroundColor: bg, borderColor: border,
-                        shadowColor: available ? '#10B981' : '#F87171',
-                        shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
-                        elevation: available ? 3 : 1,
-                      }}
-                    >
-                      {selected && (
-                        <View style={{ position: 'absolute', top: 6, right: 6 }}>
-                          <Ionicons name="checkmark-circle" size={20} color="white" />
+              {/* การ์ดรายการห้องแยกตามประเภท (สไตล์ Agoda) */}
+              {roomTypes.map((group, idx) => {
+                const img = ROOM_IMAGES[idx % ROOM_IMAGES.length];
+                const soldOut = group.availableCount === 0;
+                const pickedCount = group.rooms.filter((r) => selectedRoomIds.includes(r.id)).length;
+                return (
+                  <View
+                    key={group.label}
+                    style={{
+                      backgroundColor: 'white', borderRadius: 24, marginBottom: 18, overflow: 'hidden',
+                      borderWidth: 1, borderColor: '#EEF3F8',
+                      shadowColor: '#0F172A', shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 4,
+                      opacity: soldOut ? 0.6 : 1,
+                    }}
+                  >
+                    {/* รูปห้อง + ป้ายสถานะ */}
+                    <View style={{ height: 168, width: '100%', position: 'relative' }}>
+                      <Image source={{ uri: img }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+                      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, backgroundColor: 'rgba(0,0,0,0.12)' }} />
+                      <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: soldOut ? '#EF4444' : '#0194F3', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
+                        <Text style={{ color: 'white', fontSize: 12, fontWeight: '900' }}>
+                          {soldOut ? 'เต็มแล้ว' : `เหลือ ${group.availableCount} ห้อง`}
+                        </Text>
+                      </View>
+                      {pickedCount > 0 && (
+                        <View style={{ position: 'absolute', top: 12, right: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
+                          <Ionicons name="checkmark-circle" size={14} color="white" />
+                          <Text style={{ color: 'white', fontSize: 12, fontWeight: '900', marginLeft: 4 }}>เลือก {pickedCount}</Text>
                         </View>
                       )}
-                      <View style={{
-                        width: 40, height: 40, borderRadius: 13, marginBottom: 6,
-                        justifyContent: 'center', alignItems: 'center',
-                        backgroundColor: !available ? '#FEE2E2' : selected ? 'rgba(255,255,255,0.25)' : '#DCFCE7',
-                      }}>
-                        <Ionicons name={available ? 'bed' : 'lock-closed'} size={20} color={!available ? '#F87171' : selected ? 'white' : '#16A34A'} />
+                    </View>
+
+                    <View style={{ padding: 18 }}>
+                      {/* ชื่อประเภท + ความจุ */}
+                      <Text style={{ fontSize: 19, fontWeight: '900', color: '#1E293B' }}>{group.label}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                        <Ionicons name="people-outline" size={15} color="#0194F3" />
+                        <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '700', marginLeft: 5 }}>เข้าพักได้สูงสุด {group.capacity} คน</Text>
+                        <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#CBD5E1', marginHorizontal: 8 }} />
+                        <Ionicons name="bed-outline" size={15} color="#0194F3" />
+                        <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '700', marginLeft: 5 }}>{group.beds} เตียง</Text>
                       </View>
-                      {available ? (
-                        <>
-                          <Text style={{ fontSize: 14, fontWeight: '900', color: priceColor }}>฿{Number(room.price || 0).toLocaleString()}</Text>
-                          <Text style={{ fontSize: 8, fontWeight: '700', color: selected ? 'rgba(255,255,255,0.9)' : '#16A34A', marginTop: 1 }} numberOfLines={1}>{info.label}</Text>
-                          <Text style={{ fontSize: 8, fontWeight: '700', color: selected ? 'rgba(255,255,255,0.9)' : '#64748B', marginTop: 1 }}>พักได้ {info.capacity} คน</Text>
-                        </>
-                      ) : (
-                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#F87171' }}>ไม่ว่าง</Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-                {floorRooms.length === 0 && (
-                  <Text style={{ color: '#94A3B8', paddingVertical: 10 }}>ไม่มีห้องตรงกับตัวกรองในชั้นนี้</Text>
-                )}
-              </View>
+
+                      {/* สิ่งอำนวยความสะดวก (เช็กลิสต์) */}
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 }}>
+                        {AMENITIES.map((a) => (
+                          <View key={a} style={{ flexDirection: 'row', alignItems: 'center', width: '50%', marginBottom: 7 }}>
+                            <Ionicons name="checkmark-circle" size={15} color="#22C55E" />
+                            <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600', marginLeft: 6 }} numberOfLines={1}>{a}</Text>
+                          </View>
+                        ))}
+                      </View>
+
+                      <View style={{ height: 1, backgroundColor: '#F1F5F9', marginVertical: 14 }} />
+
+                      {/* ราคา + ตัวเลือกจำนวน */}
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                        <View>
+                          {soldOut ? (
+                            <Text style={{ fontSize: 15, fontWeight: '900', color: '#EF4444' }}>ไม่มีห้องว่าง</Text>
+                          ) : (
+                            <>
+                              <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '700' }}>เริ่มต้น</Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+                                <Text style={{ fontSize: 24, fontWeight: '900', color: '#0194F3' }}>฿{group.minPrice.toLocaleString()}</Text>
+                                <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '700', marginLeft: 4, marginBottom: 3 }}>/คืน</Text>
+                              </View>
+                            </>
+                          )}
+                        </View>
+
+                        {!soldOut && (
+                          pickedCount === 0 ? (
+                            <TouchableOpacity
+                              onPress={() => addRoomOfType(group)}
+                              activeOpacity={0.85}
+                              style={{ backgroundColor: '#0194F3', paddingHorizontal: 24, paddingVertical: 13, borderRadius: 18, flexDirection: 'row', alignItems: 'center' }}
+                            >
+                              <Text style={{ color: 'white', fontSize: 15, fontWeight: '900', marginRight: 5 }}>เลือกห้อง</Text>
+                              <Ionicons name="add-circle" size={18} color="white" />
+                            </TouchableOpacity>
+                          ) : (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0F9FF', borderRadius: 18, borderWidth: 1, borderColor: '#BAE6FD', paddingHorizontal: 6, paddingVertical: 5 }}>
+                              <TouchableOpacity onPress={() => removeRoomOfType(group)} style={{ width: 36, height: 36, borderRadius: 13, backgroundColor: 'white', justifyContent: 'center', alignItems: 'center' }}>
+                                <Ionicons name="remove" size={20} color="#0194F3" />
+                              </TouchableOpacity>
+                              <Text style={{ width: 40, textAlign: 'center', fontSize: 18, fontWeight: '900', color: '#0194F3' }}>{pickedCount}</Text>
+                              <TouchableOpacity
+                                disabled={pickedCount >= group.availableCount}
+                                onPress={() => addRoomOfType(group)}
+                                style={{ width: 36, height: 36, borderRadius: 13, backgroundColor: pickedCount >= group.availableCount ? '#E2E8F0' : '#0194F3', justifyContent: 'center', alignItems: 'center' }}
+                              >
+                                <Ionicons name="add" size={20} color="white" />
+                              </TouchableOpacity>
+                            </View>
+                          )
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+              {roomTypes.length === 0 && (
+                <Text style={{ color: '#94A3B8', paddingVertical: 10 }}>ไม่มีห้องตรงกับตัวกรอง</Text>
+              )}
             </>
           )}
 
@@ -760,6 +830,23 @@ export default function DailyReservationScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Overlay หมุนโหลดเต็มจอ — โชว์ระหว่างทำรายการจองและพาไปหน้าชำระเงิน */}
+      {loading && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', alignItems: 'center', zIndex: 9999, elevation: 9999 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, paddingVertical: 28, paddingHorizontal: 36, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 20 }}>
+            <ActivityIndicator size="large" color="#0194F3" />
+            <Text style={{ marginTop: 16, fontSize: 15, fontWeight: '900', color: '#1E293B' }}>กำลังทำรายการจอง…</Text>
+            <Text style={{ marginTop: 4, fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>กำลังพาไปหน้าชำระเงิน</Text>
+            {slowNotice && (
+              <View style={{ marginTop: 16, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#FEF3C7', borderRadius: 14, borderWidth: 1, borderColor: '#FDE68A', maxWidth: 240 }}>
+                <Text style={{ color: '#92400E', fontSize: 12, fontWeight: '800', textAlign: 'center' }}>⏳ ระบบใช้เวลานานกว่าปกติ</Text>
+                <Text style={{ color: '#B45309', fontSize: 11, marginTop: 2, textAlign: 'center' }}>กรุณารอสักครู่ อย่าเพิ่งปิดแอป</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
     </View>
   );
 }

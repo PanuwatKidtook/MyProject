@@ -81,6 +81,16 @@ export default function ReservationListScreen() {
     return String(status).trim().toLowerCase();
   };
 
+  // วันเดือนปี + เวลา (พ.ศ.) จาก timestamp ที่จองจริง — parse เอง กัน Hermes/timezone เพี้ยน
+  const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  const formatDateTime = (v) => {
+    if (!v) return '-';
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+    if (!m) return String(v);
+    const [, y, mo, d, hh, mm] = m;
+    return `${Number(d)} ${THAI_MONTHS[Number(mo) - 1]} ${Number(y) + 543} ${hh}:${mm} น.`;
+  };
+
   const isCancelledBooking = (item) => {
     const status = normalizeStatus(item.bookingStatus);
     return status === 'ยกเลิก' || status === 'cancelled' || status === 'canceled';
@@ -90,6 +100,16 @@ export default function ReservationListScreen() {
     const status = normalizeStatus(item.bookingStatus);
     return status === 'รอชำระมัดจำ' || status === 'ยืนยันการจอง' || status === 'รอดำเนินการ';
   };
+
+  // ห้องที่เช็คเอาต์/ย้ายออกแล้ว — ไม่ต้องโชว์ในประวัติการจอง (จบรอบแล้ว)
+  const isMovedOutBooking = (item) => {
+    const status = normalizeStatus(item.bookingStatus);
+    return status === 'ย้ายออกแล้ว' || status === 'ย้ายออก' || status === 'checked out' || status === 'checkedout' || status === 'moved out';
+  };
+
+  // เปิดเผยเลขห้องเฉพาะเมื่อพนักงานยืนยัน/เช็คอินที่เคาน์เตอร์แล้ว (สถานะ 'กำลังเข้าพัก') — ก่อนหน้านั้นซ่อนไว้
+  const isRoomRevealed = (item) => normalizeStatus(item.bookingStatus) === 'กำลังเข้าพัก';
+  const roomLabel = (item) => (isRoomRevealed(item) ? `ห้อง ${item.roomNumber}` : 'รอยืนยันที่เคาน์เตอร์');
 
   const cancelReasons = [
     'เปลี่ยนใจไม่เข้าพัก',
@@ -165,7 +185,7 @@ export default function ReservationListScreen() {
 
   // รายการที่ยัง active ในหมวดห้องของโรลนี้ (ไม่รวมที่ถูกยกเลิกแล้ว)
   const filteredBookings = useMemo(() => {
-    return bookings.filter(item => item.rentType === roleType && !isCancelledBooking(item));
+    return bookings.filter(item => item.rentType === roleType && !isCancelledBooking(item) && !isMovedOutBooking(item));
   }, [roleType, bookings]);
 
   const calcPrice = (item) => {
@@ -201,7 +221,7 @@ export default function ReservationListScreen() {
         <View style={{ flex: 1, padding: 15, justifyContent: 'space-between' }}>
           <View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontWeight: '800', fontSize: 18, color: '#1E293B' }}>ห้อง {item.roomNumber}</Text>
+              <Text style={{ fontWeight: '800', fontSize: isRoomRevealed(item) ? 18 : 14, color: isRoomRevealed(item) ? '#1E293B' : '#94A3B8' }}>{roomLabel(item)}</Text>
               <View
                 style={{
                   paddingHorizontal: 8,
@@ -417,7 +437,7 @@ export default function ReservationListScreen() {
         >
           <View onStartShouldSetResponder={() => true} style={{ backgroundColor: 'white', borderRadius: 26, padding: 22 }}>
             <Text style={{ fontSize: 17, fontWeight: '900', color: '#1E293B', textAlign: 'center' }}>
-              ห้อง {choiceTarget?.roomNumber}
+              {choiceTarget ? roomLabel(choiceTarget) : ''}
             </Text>
             <Text style={{ fontSize: 12, color: '#64748B', textAlign: 'center', marginTop: 4, marginBottom: 18 }}>
               เลือกสิ่งที่ต้องการดู
@@ -472,7 +492,7 @@ export default function ReservationListScreen() {
 
             <View style={{ gap: 12 }}>
               <DetailRow label="ID การจอง" value={`#${selectedDetail?.bookingId}`} />
-              <DetailRow label="หมายเลขห้อง" value={selectedDetail?.roomNumber} />
+              <DetailRow label="หมายเลขห้อง" value={selectedDetail && isRoomRevealed(selectedDetail) ? selectedDetail.roomNumber : 'รอยืนยันที่เคาน์เตอร์'} />
               <DetailRow label="ประเภท" value={selectedDetail?.rentType === 'monthly' ? 'รายเดือน' : 'รายวัน'} />
               <DetailRow label="ราคารวม" value={calcPrice(selectedDetail || {})} />
               <DetailRow
@@ -499,6 +519,7 @@ export default function ReservationListScreen() {
                     : '-'
                 }
               />
+              <DetailRow label="เวลาที่จอง" value={formatDateTime(selectedDetail?.bookedAt)} />
               <DetailRow label="สถานะ" value={selectedDetail?.bookingStatus || '-'} />
               {selectedDetail?.cancelReason ? (
                 <DetailRow label="เหตุผลยกเลิก" value={selectedDetail.cancelReason} />

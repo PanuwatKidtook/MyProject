@@ -9,14 +9,29 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../../lib/api';
 
-// ชั้นของห้อง = เลขตัวแรกของเลขห้อง (102 → ชั้น 1) — ใช้จัดกลุ่มผังชั้น (ตรงกับ Roomuser.jsx ฝั่ง y3)
-const floorOf = (roomNumber) => String(roomNumber || '').charAt(0) || '?';
-
-// รายชื่อชั้นทั้งหมด เรียงจากน้อยไปมาก (['1','2','3'])
-function floorsOf(rooms) {
-  const set = new Set(rooms.map((r) => floorOf(r.room_number)));
-  return [...set].sort();
+// จัดกลุ่มห้องตามประเภท (type_name) — คงลำดับที่เจอ → [{ typeName, rooms:[...] }, ...]
+function groupRoomsByType(rooms) {
+  const map = new Map();
+  for (const r of rooms) {
+    const key = r.type_name || 'ห้องพักรายเดือน';
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  }
+  return [...map.entries()].map(([typeName, list]) => ({ typeName, rooms: list }));
 }
+
+// มัดจำล็อกห้องรายเดือน (บาท) — เก็บก่อนเพื่อกันห้อง ค่าเช่า/มัดจำสัญญาที่เหลือเก็บตอนเช็คอิน
+const DEPOSIT_LOCK = 2000;
+
+// สิ่งอำนวยความสะดวกมาตรฐานของทุกห้อง (โชว์เป็นเช็กลิสต์ในการ์ด)
+const AMENITIES = ['ฟรี WiFi', 'เครื่องปรับอากาศ', 'ห้องน้ำส่วนตัว', 'ทีวีดาวเทียม', 'ตู้เย็น', 'ที่จอดรถ'];
+
+// รูปสำรองของการ์ด (ใช้เมื่อห้องไม่มี image_url)
+const ROOM_IMAGES = [
+  'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?q=80&w=800',
+  'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?q=80&w=800',
+  'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?q=80&w=800',
+];
 
 export default function MonthlyReservationScreen() {
   const router = useRouter();
@@ -31,7 +46,7 @@ export default function MonthlyReservationScreen() {
 
   // ผังชั้น: ห้องทั้งหมด + ว่าง/ไม่ว่าง ณ วันเข้าพักที่เลือก
   const [availability, setAvailability] = useState([]);
-  const [selectedFloor, setSelectedFloor] = useState('');
+  const [bedFilter, setBedFilter] = useState(null); // กรองตามประเภทห้อง/เตียง (type_name) — null = ทั้งหมด
   const [fetching, setFetching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -115,8 +130,6 @@ export default function MonthlyReservationScreen() {
       const res = await api.get(`/rooms/availability?date=${date}`);
       const rows = res.data?.data || [];
       setAvailability(rows);
-      const floors = floorsOf(rows);
-      setSelectedFloor((prev) => (floors.includes(prev) ? prev : (floors[0] || '')));
     } catch (err) {
       setAvailability([]);
       Alert.alert('ผิดพลาด', err.response?.data?.message || 'โหลดผังห้องไม่สำเร็จ');
@@ -157,6 +170,8 @@ export default function MonthlyReservationScreen() {
       router.push('/(auth)/login');
       return;
     }
+    const roomId = detailRoom.id;
+    setDetailRoom(null);   // ปิด modal ทันที แล้วโชว์ overlay หมุนโหลดกลางจอระหว่างพาไปหน้าจ่ายเงิน
     setLoading(true);
     try {
       // วันออกชั่วคราว = วันเข้าพัก + 1 เดือน (พอผ่าน overlap-check; สัญญาจริงกำหนดตอนเช็คอิน)
@@ -165,12 +180,11 @@ export default function MonthlyReservationScreen() {
       const endDate = end.toISOString().split('T')[0];
 
       const res = await api.post('/booking', {
-        roomId: detailRoom.id,
+        roomId,
         startDate,
         endDate,
         rentType: 'monthly',
       });
-      setDetailRoom(null);
       loadAvailability(startDate);
       // จองสำเร็จ → พาไปหน้าชำระเงิน /bill แทนการเปิด Modal ซ้อน Modal
       const b = res.data;
@@ -182,6 +196,7 @@ export default function MonthlyReservationScreen() {
           roomNumber: b.roomNumber,
           checkInDate: b.checkInDate,
           checkOutDate: b.checkOutDate,
+          bookedAt: b.bookedAt || '',
           rentType: b.rentType,
           totalPrice: b.totalPrice,
           holdExpiresAt: b.holdExpiresAt || '',
@@ -236,8 +251,11 @@ export default function MonthlyReservationScreen() {
     return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
-  const floors = floorsOf(availability);
-  const floorRooms = availability.filter((r) => floorOf(r.room_number) === selectedFloor);
+  // ประเภทห้องทั้งหมด (เตียงเดี่ยว/คู่/ฯลฯ) ไว้ทำชิปกรอง — เหมือนรายวัน
+  const roomTypeNames = [...new Set(availability.map((r) => r.type_name || 'ห้องพักรายเดือน'))];
+  const visibleRooms = availability
+    .filter((r) => !bedFilter || (r.type_name || 'ห้องพักรายเดือน') === bedFilter);
+  const roomGroups = groupRoomsByType(visibleRooms); // การ์ดต่อห้อง แยกตามประเภท (เหมือนรายวัน)
 
   return (
     <View style={{ flex: 1, backgroundColor: '#F8F9FB' }}>
@@ -258,11 +276,11 @@ export default function MonthlyReservationScreen() {
               <Text style={{ color: '#64748B', fontWeight: 'bold', fontSize: 12 }}>{lang === 'TH' ? 'EN' : 'TH'}</Text>
             </TouchableOpacity>
             {user && (
-              <TouchableOpacity onPress={() => setShowProfileMenu(true)} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center', borderWidth: 2.5, borderColor: '#2DD4BF' }}>
+              <TouchableOpacity onPress={() => setShowProfileMenu(true)} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#EDE9FE', justifyContent: 'center', alignItems: 'center', borderWidth: 2.5, borderColor: '#2DD4BF' }}>
                 {user?.avatar ? (
                   <Image source={{ uri: user.avatar }} style={{ width: '100%', height: '100%', borderRadius: 22 }} />
                 ) : (
-                  <Ionicons name="person" size={22} color="#0194F3" />
+                  <Ionicons name="person" size={22} color="#7C3AED" />
                 )}
               </TouchableOpacity>
             )}
@@ -276,8 +294,8 @@ export default function MonthlyReservationScreen() {
           <View style={{ position: 'absolute', top: 86, right: 16, width: 220 }}>
             <View style={{ backgroundColor: 'white', borderRadius: 22, padding: 12, elevation: 10 }}>
               <TouchableOpacity onPress={() => { setShowProfileMenu(false); router.replace('/(tabs)'); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 12, borderRadius: 16 }}>
-                <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#E0F2FE', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                  <Ionicons name="home-outline" size={18} color="#0194F3" />
+                <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#EDE9FE', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                  <Ionicons name="home-outline" size={18} color="#7C3AED" />
                 </View>
                 <Text style={{ fontSize: 15, fontWeight: '700', color: '#1E293B' }}>{t.home}</Text>
               </TouchableOpacity>
@@ -293,13 +311,13 @@ export default function MonthlyReservationScreen() {
         </TouchableOpacity>
       </Modal>
 
-      <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#0194F3']} />}>
+      <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#7C3AED']} />}>
         {showInitialModal ? (
           <View style={{ padding: 25 }}>
             <Text style={{ fontSize: 19, fontWeight: '800', color: '#1E293B', textAlign: 'center', marginBottom: 20 }}>{t.pickDateMonthly}</Text>
-            <View style={{ flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 20, padding: 18, borderWidth: 1.5, borderColor: '#0194F3', alignItems: 'center' }}>
-              <View style={{ backgroundColor: '#E0F2FE', padding: 8, borderRadius: 12, marginRight: 15 }}>
-                <Ionicons name="calendar-sharp" size={24} color="#0194F3" />
+            <View style={{ flexDirection: 'row', backgroundColor: '#F8FAFC', borderRadius: 20, padding: 18, borderWidth: 1.5, borderColor: '#7C3AED', alignItems: 'center' }}>
+              <View style={{ backgroundColor: '#EDE9FE', padding: 8, borderRadius: 12, marginRight: 15 }}>
+                <Ionicons name="calendar-sharp" size={24} color="#7C3AED" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '900' }}>MOVE-IN DATE</Text>
@@ -311,11 +329,11 @@ export default function MonthlyReservationScreen() {
                 current={startDate}
                 minDate={new Date().toISOString().split('T')[0]}
                 onDayPress={(day) => setStartDate(day.dateString)}
-                markedDates={{ [startDate]: { selected: true, selectedColor: '#0194F3' } }}
-                theme={{ todayTextColor: '#0194F3', selectedDayBackgroundColor: '#0194F3' }}
+                markedDates={{ [startDate]: { selected: true, selectedColor: '#7C3AED' } }}
+                theme={{ todayTextColor: '#7C3AED', selectedDayBackgroundColor: '#7C3AED' }}
               />
             </View>
-            <TouchableOpacity onPress={handleConfirmInitialDate} style={{ backgroundColor: '#0194F3', marginTop: 25, paddingVertical: 18, borderRadius: 25, alignItems: 'center', elevation: 5 }}>
+            <TouchableOpacity onPress={handleConfirmInitialDate} style={{ backgroundColor: '#7C3AED', marginTop: 25, paddingVertical: 18, borderRadius: 25, alignItems: 'center', elevation: 5 }}>
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 18 }}>ดูผังห้องว่าง</Text>
             </TouchableOpacity>
           </View>
@@ -324,10 +342,14 @@ export default function MonthlyReservationScreen() {
         <View style={{ height: 200, width: '100%', position: 'relative' }}>
           <Image source={{ uri: 'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?q=80&w=1000' }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)' }} />
-          <View style={{ position: 'absolute', bottom: 25, left: 25 }}>
+          <View style={{ position: 'absolute', bottom: 25, left: 25, right: 25 }}>
+            <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', backgroundColor: '#7C3AED', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, marginBottom: 10 }}>
+              <Ionicons name="home" size={13} color="white" />
+              <Text style={{ color: 'white', fontSize: 12, fontWeight: '900', marginLeft: 6 }}>เช่าอยู่ยาว · ทำสัญญารายเดือน</Text>
+            </View>
             <Text style={{ color: 'white', fontSize: 30, fontWeight: '900' }}>Around Loei รายเดือน</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-              <MaterialIcons name="location-on" size={18} color="#0194F3" />
+              <MaterialIcons name="location-on" size={18} color="#C4B5FD" />
               <Text style={{ color: '#E2E8F0', fontSize: 14, marginLeft: 6 }}>{t.location}</Text>
             </View>
           </View>
@@ -354,90 +376,136 @@ export default function MonthlyReservationScreen() {
               <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '900' }}>เลือกห้องจากผังชั้น · วันเข้าพัก</Text>
               <Text style={{ fontSize: 16, color: '#1E293B', fontWeight: '800', marginTop: 2 }}>{formatDateTH(startDate)}</Text>
             </View>
-            <TouchableOpacity onPress={() => setShowInitialModal(true)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#E0F2FE', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 }}>
-              <Ionicons name="calendar-outline" size={16} color="#0194F3" />
-              <Text style={{ color: '#0194F3', fontWeight: 'bold', fontSize: 12, marginLeft: 6 }}>เปลี่ยนวัน</Text>
+            <TouchableOpacity onPress={() => setShowInitialModal(true)} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EDE9FE', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 }}>
+              <Ionicons name="calendar-outline" size={16} color="#7C3AED" />
+              <Text style={{ color: '#7C3AED', fontWeight: 'bold', fontSize: 12, marginLeft: 6 }}>เปลี่ยนวัน</Text>
             </TouchableOpacity>
           </View>
 
-          {/* คำอธิบายสี */}
-          <View style={{ flexDirection: 'row', gap: 16, marginBottom: 14 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#86EFAC', marginRight: 6 }} />
-              <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>ว่าง (กดจองได้)</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 14, height: 14, borderRadius: 4, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', marginRight: 6 }} />
-              <Text style={{ fontSize: 12, color: '#64748B', fontWeight: '600' }}>ไม่ว่าง</Text>
-            </View>
-          </View>
-
           {fetching ? (
-            <ActivityIndicator size="large" color="#0194F3" style={{ marginTop: 30 }} />
+            <ActivityIndicator size="large" color="#7C3AED" style={{ marginTop: 30 }} />
           ) : availability.length === 0 ? (
             <View style={{ alignItems: 'center', marginTop: 30 }}>
               <Text style={{ color: '#94A3B8' }}>ไม่มีข้อมูลห้อง</Text>
             </View>
           ) : (
             <>
-              {/* แท็บเลือกชั้น */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-                {floors.map((f) => {
-                  const active = selectedFloor === f;
-                  return (
-                    <TouchableOpacity key={f} onPress={() => setSelectedFloor(f)} style={{ paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, backgroundColor: active ? '#0194F3' : '#F1F5F9' }}>
-                      <Text style={{ fontSize: 13, fontWeight: 'bold', color: active ? 'white' : '#64748B' }}>ชั้น {f}</Text>
+              {/* ชิปกรองประเภทห้อง/เตียง (เหมือนรายวัน) */}
+              {roomTypeNames.length > 0 && (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#64748B', marginBottom: 10 }}>ประเภทห้อง</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    <TouchableOpacity onPress={() => setBedFilter(null)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: !bedFilter ? '#7C3AED' : '#F1F5F9' }}>
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: !bedFilter ? 'white' : '#64748B' }}>ทั้งหมด</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
+                    {roomTypeNames.map((tn) => {
+                      const active = bedFilter === tn;
+                      return (
+                        <TouchableOpacity key={tn} onPress={() => setBedFilter(active ? null : tn)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: active ? '#7C3AED' : '#F1F5F9' }}>
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: active ? 'white' : '#64748B' }}>{tn}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
 
-              {/* ผังห้องของชั้นที่เลือก — ว่าง(เขียว)/ไม่ว่าง(แดง) — ไม่แสดงเลขห้อง */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                {floorRooms.map((room) => {
-                  const available = room.available;
-                  return (
-                    <TouchableOpacity
-                      key={room.room_id}
-                      disabled={!available}
-                      activeOpacity={0.85}
-                      onPress={() => openDetail(room)}
-                      style={{
-                        width: '30.33%', margin: '1.5%', height: 116, borderRadius: 20,
-                        justifyContent: 'center', alignItems: 'center', borderWidth: 1.5,
-                        paddingHorizontal: 6,
-                        backgroundColor: available ? '#F0FDF4' : '#FEF2F2',
-                        borderColor: available ? '#A7F3D0' : '#FECACA',
-                        shadowColor: available ? '#10B981' : '#F87171',
-                        shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
-                        elevation: available ? 3 : 1,
-                      }}
-                    >
-                      <View style={{
-                        width: 42, height: 42, borderRadius: 14, marginBottom: 8,
-                        justifyContent: 'center', alignItems: 'center',
-                        backgroundColor: available ? '#DCFCE7' : '#FEE2E2',
-                      }}>
-                        <Ionicons name={available ? 'bed' : 'lock-closed'} size={22} color={available ? '#16A34A' : '#F87171'} />
+              {/* การ์ดยูนิตห้อง (ต่อห้อง) แยกตามประเภท (เหมือนรายวัน) — โทนม่วง + ข้อมูลเช่ารายเดือน */}
+              {roomGroups.map((group) => (
+                <View key={group.typeName}>
+                  {/* หัวข้อประเภทห้อง */}
+                  <View style={{ marginBottom: 12, marginTop: 2 }}>
+                    <Text style={{ fontSize: 16, fontWeight: '900', color: '#6D28D9' }}>{group.typeName}</Text>
+                    <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '700', marginTop: 2 }}>ว่าง {group.rooms.filter((r) => r.available).length} จาก {group.rooms.length} ห้อง</Text>
+                  </View>
+                  {group.rooms.map((room, idx) => {
+                const available = room.available;
+                const img = room.image_url || ROOM_IMAGES[idx % ROOM_IMAGES.length];
+                return (
+                  <View
+                    key={room.room_id}
+                    style={{
+                      backgroundColor: 'white', borderRadius: 24, marginBottom: 18, overflow: 'hidden',
+                      borderWidth: 1, borderColor: '#EEE9F8',
+                      shadowColor: '#0F172A', shadowOpacity: 0.08, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 4,
+                      opacity: available ? 1 : 0.6,
+                    }}
+                  >
+                    {/* รูปห้อง + ป้ายสถานะ/ชั้น */}
+                    <View style={{ height: 168, width: '100%', position: 'relative' }}>
+                      <Image source={{ uri: img }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+                      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 60, backgroundColor: 'rgba(0,0,0,0.12)' }} />
+                      <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: available ? '#7C3AED' : '#EF4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
+                        <Text style={{ color: 'white', fontSize: 12, fontWeight: '900' }}>{available ? 'ว่าง' : 'ไม่ว่าง'}</Text>
                       </View>
-                      {available ? (
-                        <>
-                          <Text style={{ fontSize: 14, fontWeight: '900', color: '#15803D' }}>฿{Number(room.price_monthly || 0).toLocaleString()}</Text>
-                          <Text style={{ fontSize: 9, fontWeight: '700', color: '#16A34A', marginTop: 1 }}>ต่อเดือน</Text>
-                        </>
-                      ) : (
-                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#F87171' }}>ไม่ว่าง</Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+                    </View>
+
+                    <View style={{ padding: 18 }}>
+                      {/* ประเภท */}
+                      <Text style={{ fontSize: 19, fontWeight: '900', color: '#1E293B' }}>{room.type_name || 'ห้องพักรายเดือน'}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                        <Ionicons name="home-outline" size={15} color="#7C3AED" />
+                        <Text style={{ fontSize: 13, color: '#64748B', fontWeight: '700', marginLeft: 5 }}>เช่าอยู่ยาว · ทำสัญญารายเดือน</Text>
+                      </View>
+
+                      {/* สิ่งอำนวยความสะดวก */}
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 }}>
+                        {AMENITIES.map((a) => (
+                          <View key={a} style={{ flexDirection: 'row', alignItems: 'center', width: '50%', marginBottom: 7 }}>
+                            <Ionicons name="checkmark-circle" size={15} color="#8B5CF6" />
+                            <Text style={{ fontSize: 12, color: '#475569', fontWeight: '600', marginLeft: 6 }} numberOfLines={1}>{a}</Text>
+                          </View>
+                        ))}
+                      </View>
+
+                      {/* กล่องมัดจำล็อกห้อง */}
+                      <View style={{ marginTop: 6, marginBottom: 14, flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F3FF', borderRadius: 14, borderWidth: 1, borderColor: '#DDD6FE', paddingHorizontal: 12, paddingVertical: 10 }}>
+                        <Ionicons name="lock-closed" size={15} color="#7C3AED" />
+                        <Text style={{ fontSize: 12, color: '#6D28D9', fontWeight: '700', marginLeft: 8 }}>มัดจำล็อกห้อง ฿{DEPOSIT_LOCK.toLocaleString()} · ค่าเช่า/มัดจำสัญญาเก็บตอนเช็คอิน</Text>
+                      </View>
+
+                      {/* ราคา + ปุ่มจอง */}
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                        <View>
+                          {available ? (
+                            <>
+                              <Text style={{ fontSize: 11, color: '#94A3B8', fontWeight: '700' }}>ค่าเช่า</Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+                                <Text style={{ fontSize: 24, fontWeight: '900', color: '#7C3AED' }}>฿{Number(room.price_monthly || 0).toLocaleString()}</Text>
+                                <Text style={{ fontSize: 12, color: '#94A3B8', fontWeight: '700', marginLeft: 4, marginBottom: 3 }}>/เดือน</Text>
+                              </View>
+                            </>
+                          ) : (
+                            <Text style={{ fontSize: 15, fontWeight: '900', color: '#EF4444' }}>ห้องไม่ว่าง</Text>
+                          )}
+                        </View>
+
+                        {available && (
+                          <TouchableOpacity
+                            onPress={() => openDetail(room)}
+                            activeOpacity={0.85}
+                            style={{ backgroundColor: '#7C3AED', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 18, flexDirection: 'row', alignItems: 'center' }}
+                          >
+                            <Text style={{ color: 'white', fontSize: 15, fontWeight: '900', marginRight: 5 }}>จองห้องนี้</Text>
+                            <Ionicons name="chevron-forward-circle" size={18} color="white" />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                );
+                  })}
+                </View>
+              ))}
+              {visibleRooms.length === 0 && (
+                <Text style={{ color: '#94A3B8', paddingVertical: 10 }}>ไม่มีห้องตรงกับตัวกรอง</Text>
+              )}
             </>
           )}
 
           <TouchableOpacity onPress={() => router.replace('/(tabs)')} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 16, marginTop: 20, marginBottom: 40, borderRadius: 20, backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' }}>
-            <Ionicons name="home-outline" size={20} color="#0194F3" />
-            <Text style={{ marginLeft: 10, color: '#0194F3', fontWeight: 'bold' }}>กลับสู่หน้าหลัก</Text>
+            <Ionicons name="home-outline" size={20} color="#7C3AED" />
+            <Text style={{ marginLeft: 10, color: '#7C3AED', fontWeight: 'bold' }}>กลับสู่หน้าหลัก</Text>
           </TouchableOpacity>
         </View>
         </>
@@ -460,12 +528,12 @@ export default function MonthlyReservationScreen() {
                   <View>
                     <Text style={{ fontSize: 26, fontWeight: '900', color: '#1E293B' }}>{detailRoom?.typeName || 'ห้องพักรายเดือน'}</Text>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-                      <Ionicons name="bed-outline" size={14} color="#0194F3" />
-                      <Text style={{ color: '#0194F3', marginLeft: 5, fontSize: 13, fontWeight: '700' }}>ห้องพักรายเดือน</Text>
+                      <Ionicons name="bed-outline" size={14} color="#7C3AED" />
+                      <Text style={{ color: '#7C3AED', marginLeft: 5, fontSize: 13, fontWeight: '700' }}>ห้องพักรายเดือน</Text>
                     </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 26, fontWeight: '900', color: '#0194F3' }}>฿{Number(detailRoom?.priceMonthly || 0).toLocaleString()}</Text>
+                    <Text style={{ fontSize: 26, fontWeight: '900', color: '#7C3AED' }}>฿{Number(detailRoom?.priceMonthly || 0).toLocaleString()}</Text>
                     <Text style={{ fontSize: 12, color: '#64748B', fontWeight: 'bold' }}> /เดือน</Text>
                   </View>
                 </View>
@@ -494,7 +562,7 @@ export default function MonthlyReservationScreen() {
                         <TouchableOpacity disabled={loading} onPress={() => setConfirmingDeposit(false)} style={{ flex: 1, backgroundColor: '#F1F5F9', paddingVertical: 14, borderRadius: 16, alignItems: 'center' }}>
                           <Text style={{ color: '#64748B', fontWeight: '800' }}>ยกเลิก</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity disabled={loading} onPress={doBooking} style={{ flex: 2, backgroundColor: '#0194F3', paddingVertical: 14, borderRadius: 16, alignItems: 'center', opacity: loading ? 0.6 : 1 }}>
+                        <TouchableOpacity disabled={loading} onPress={doBooking} style={{ flex: 2, backgroundColor: '#7C3AED', paddingVertical: 14, borderRadius: 16, alignItems: 'center', opacity: loading ? 0.6 : 1 }}>
                           {loading ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '900' }}>ยอมรับ และจองเลย</Text>}
                         </TouchableOpacity>
                       </View>
@@ -506,7 +574,7 @@ export default function MonthlyReservationScreen() {
                       )}
                     </View>
                   ) : (
-                    <TouchableOpacity disabled={loading} onPress={handleConfirmBooking} style={{ backgroundColor: '#0194F3', paddingVertical: 18, borderRadius: 22, alignItems: 'center', marginTop: 25, marginBottom: 40, elevation: 5 }}>
+                    <TouchableOpacity disabled={loading} onPress={handleConfirmBooking} style={{ backgroundColor: '#7C3AED', paddingVertical: 18, borderRadius: 22, alignItems: 'center', marginTop: 25, marginBottom: 40, elevation: 5 }}>
                       {loading ? <ActivityIndicator color="white" /> : (
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Text style={{ color: 'white', fontSize: 16, fontWeight: '900', marginRight: 8 }}>จองห้องนี้ (ทำสัญญารายเดือน)</Text>
@@ -528,6 +596,23 @@ export default function MonthlyReservationScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Overlay หมุนโหลดเต็มจอ — โชว์ระหว่างทำรายการจองและพาไปหน้าชำระเงิน */}
+      {loading && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', alignItems: 'center', zIndex: 9999, elevation: 9999 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, paddingVertical: 28, paddingHorizontal: 36, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 20 }}>
+            <ActivityIndicator size="large" color="#7C3AED" />
+            <Text style={{ marginTop: 16, fontSize: 15, fontWeight: '900', color: '#1E293B' }}>กำลังทำรายการจอง…</Text>
+            <Text style={{ marginTop: 4, fontSize: 12, color: '#94A3B8', fontWeight: '600' }}>กำลังพาไปหน้าชำระเงิน</Text>
+            {slowNotice && (
+              <View style={{ marginTop: 16, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#FEF3C7', borderRadius: 14, borderWidth: 1, borderColor: '#FDE68A', maxWidth: 240 }}>
+                <Text style={{ color: '#92400E', fontSize: 12, fontWeight: '800', textAlign: 'center' }}>⏳ ระบบใช้เวลานานกว่าปกติ</Text>
+                <Text style={{ color: '#B45309', fontSize: 11, marginTop: 2, textAlign: 'center' }}>กรุณารอสักครู่ อย่าเพิ่งปิดแอป</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
