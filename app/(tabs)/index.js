@@ -648,6 +648,8 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
 
+          {/* ผู้เช่ารายเดือนไม่ต้องเช็คปฏิทินห้องว่าง (จองได้ทีละห้องอยู่แล้ว) — ซ่อนเมนูนี้; รายวันและผู้ที่ยังไม่ล็อกอินยังเห็นได้ */}
+          {user?.role !== 'Monthly_Tenant' && (
           <TouchableOpacity
             onPress={() => router.push('/calendar')}
             style={{
@@ -673,6 +675,7 @@ export default function HomeScreen() {
 
             <Ionicons name="chevron-forward" size={20} color="#0194F3" />
           </TouchableOpacity>
+          )}
 
           <View style={{ marginBottom: 20 }}>
             <Text style={{ fontSize: 36, fontWeight: 'bold', color: '#0194F3' }}>{t.price}<Text style={{ fontSize: 18, color: '#999', fontWeight: 'normal' }}>{t.unit}</Text></Text>

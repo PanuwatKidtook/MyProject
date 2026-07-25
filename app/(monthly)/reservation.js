@@ -203,7 +203,7 @@ export default function MonthlyReservationScreen() {
     if (activeMonthlyBooking) {
       Alert.alert(
         'จองได้แค่ 1 ห้องต่อบัญชี',
-        `คุณมีห้องพักรายเดือนที่จองไว้อยู่แล้ว (ห้อง ${activeMonthlyBooking.roomNumber}) กรุณายกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้`,
+        `คุณมีห้องพักรายเดือนที่จองไว้อยู่แล้ว กรุณายกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้`,
         [
           { text: 'ปิด', style: 'cancel' },
           { text: 'ไปหน้ายกเลิก', onPress: () => { setDetailRoom(null); router.push('/reservationlist'); } }
@@ -341,7 +341,7 @@ export default function MonthlyReservationScreen() {
             >
               <Ionicons name="alert-circle" size={22} color="#EA580C" style={{ marginRight: 10 }} />
               <View style={{ flex: 1 }}>
-                <Text style={{ color: '#9A3412', fontWeight: '800', fontSize: 13 }}>คุณมีห้องพักรายเดือนที่จองไว้แล้ว (ห้อง {activeMonthlyBooking.roomNumber})</Text>
+                <Text style={{ color: '#9A3412', fontWeight: '800', fontSize: 13 }}>คุณมีห้องพักรายเดือนที่จองไว้แล้ว</Text>
                 <Text style={{ color: '#C2410C', fontSize: 12, marginTop: 2 }}>ต้องยกเลิกการจองเดิมก่อน ถึงจะจองห้องใหม่ได้ — แตะเพื่อไปหน้ายกเลิก</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#EA580C" />
@@ -392,7 +392,7 @@ export default function MonthlyReservationScreen() {
                 })}
               </View>
 
-              {/* ผังห้องของชั้นที่เลือก — ว่าง(เขียว)/ไม่ว่าง(แดง) */}
+              {/* ผังห้องของชั้นที่เลือก — ว่าง(เขียว)/ไม่ว่าง(แดง) — ไม่แสดงเลขห้อง */}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 {floorRooms.map((room) => {
                   const available = room.available;
@@ -400,18 +400,34 @@ export default function MonthlyReservationScreen() {
                     <TouchableOpacity
                       key={room.room_id}
                       disabled={!available}
+                      activeOpacity={0.85}
                       onPress={() => openDetail(room)}
                       style={{
-                        width: '30.33%', margin: '1.5%', height: 92, borderRadius: 16,
-                        justifyContent: 'center', alignItems: 'center', borderWidth: 2,
+                        width: '30.33%', margin: '1.5%', height: 116, borderRadius: 20,
+                        justifyContent: 'center', alignItems: 'center', borderWidth: 1.5,
+                        paddingHorizontal: 6,
                         backgroundColor: available ? '#F0FDF4' : '#FEF2F2',
-                        borderColor: available ? '#86EFAC' : '#FECACA',
+                        borderColor: available ? '#A7F3D0' : '#FECACA',
+                        shadowColor: available ? '#10B981' : '#F87171',
+                        shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
+                        elevation: available ? 3 : 1,
                       }}
                     >
-                      <Text style={{ fontSize: 16, fontWeight: '800', color: available ? '#15803D' : '#F87171' }}>{room.room_number}</Text>
-                      <Text style={{ fontSize: 9, fontWeight: '700', color: available ? '#16A34A' : '#F87171', marginTop: 4 }}>
-                        {available ? `฿${Number(room.price_monthly || 0).toLocaleString()}/ด.` : 'ไม่ว่าง'}
-                      </Text>
+                      <View style={{
+                        width: 42, height: 42, borderRadius: 14, marginBottom: 8,
+                        justifyContent: 'center', alignItems: 'center',
+                        backgroundColor: available ? '#DCFCE7' : '#FEE2E2',
+                      }}>
+                        <Ionicons name={available ? 'bed' : 'lock-closed'} size={22} color={available ? '#16A34A' : '#F87171'} />
+                      </View>
+                      {available ? (
+                        <>
+                          <Text style={{ fontSize: 14, fontWeight: '900', color: '#15803D' }}>฿{Number(room.price_monthly || 0).toLocaleString()}</Text>
+                          <Text style={{ fontSize: 9, fontWeight: '700', color: '#16A34A', marginTop: 1 }}>ต่อเดือน</Text>
+                        </>
+                      ) : (
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#F87171' }}>ไม่ว่าง</Text>
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -442,8 +458,11 @@ export default function MonthlyReservationScreen() {
               <View style={{ padding: 25 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                   <View>
-                    <Text style={{ fontSize: 28, fontWeight: '900', color: '#1E293B' }}>ห้อง {detailRoom?.number}</Text>
-                    <Text style={{ color: '#94A3B8', marginTop: 4, fontSize: 14, fontWeight: '600' }}>{detailRoom?.typeName || 'รายเดือน'}</Text>
+                    <Text style={{ fontSize: 26, fontWeight: '900', color: '#1E293B' }}>{detailRoom?.typeName || 'ห้องพักรายเดือน'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                      <Ionicons name="bed-outline" size={14} color="#0194F3" />
+                      <Text style={{ color: '#0194F3', marginLeft: 5, fontSize: 13, fontWeight: '700' }}>ห้องพักรายเดือน</Text>
+                    </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={{ fontSize: 26, fontWeight: '900', color: '#0194F3' }}>฿{Number(detailRoom?.priceMonthly || 0).toLocaleString()}</Text>

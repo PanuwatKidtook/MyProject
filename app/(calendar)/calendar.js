@@ -40,6 +40,19 @@ const addDaysToDateString = (dateString, days) => {
   return d.toISOString().split('T')[0];
 };
 
+// ชั้นของห้อง = เลขตัวแรกของเลขห้อง (102 → ชั้น 1) — ใช้จัดกลุ่มผังชั้น
+const floorOf = (roomNumber) => String(roomNumber || '').charAt(0) || '?';
+
+// จัดกลุ่มห้องตามชั้น แล้วเรียงชั้นจากน้อยไปมาก → [{ floor:'1', rooms:[...] }, ...]
+const groupByFloor = (rooms) => {
+  const map = {};
+  rooms.forEach((r) => {
+    const f = floorOf(r.number);
+    (map[f] = map[f] || []).push(r);
+  });
+  return Object.keys(map).sort().map((f) => ({ floor: f, rooms: map[f] }));
+};
+
 export default function CalendarScreen() {
   const router = useRouter();
   const [user, setUser] = useState(null);
@@ -67,6 +80,7 @@ export default function CalendarScreen() {
       today: 'วันนี้',
       daily: 'รายวัน',
       monthly: 'รายเดือน',
+      floor: 'ชั้น',
       langButton: 'เปลี่ยนภาษา',
       listTitle: 'ห้องว่างในวันที่เลือก',
       back: 'ย้อนกลับ',
@@ -92,6 +106,7 @@ export default function CalendarScreen() {
       today: 'Today',
       daily: 'Daily',
       monthly: 'Monthly',
+      floor: 'Floor',
       langButton: 'Change language',
       listTitle: 'Available rooms',
       back: 'Back',
@@ -212,10 +227,13 @@ export default function CalendarScreen() {
         <Ionicons name="bed-outline" size={22} color="#0EA5E9" />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.roomText}>{t.room} {item.number}</Text>
-        <Text style={styles.cardType}>{item.type || '-'}</Text>
+        <Text style={styles.roomText}>{item.type || (activeTab === 'monthly' ? t.monthly : t.daily)}</Text>
+        <Text style={styles.cardType}>
+          ฿{Number(item.price || 0).toLocaleString()} {activeTab === 'monthly' ? t.month : t.night}
+        </Text>
       </View>
       <View style={styles.availableChip}>
+        <View style={styles.availableChipDot} />
         <Text style={styles.availableChipText}>{t.available}</Text>
       </View>
     </TouchableOpacity>
@@ -333,7 +351,20 @@ export default function CalendarScreen() {
               <Text style={styles.emptyText}>{t.empty}</Text>
             </View>
           ) : (
-            activeRooms.map(renderCard)
+            groupByFloor(activeRooms).map(({ floor, rooms }) => (
+              <View key={floor} style={{ marginBottom: 6 }}>
+                <View style={styles.floorHeader}>
+                  <View style={styles.floorBadge}>
+                    <Text style={styles.floorBadgeText}>{floor}</Text>
+                  </View>
+                  <Text style={styles.floorTitle}>{t.floor} {floor}</Text>
+                  <View style={styles.floorCountChip}>
+                    <Text style={styles.floorCountText}>{rooms.length} {t.available.toLowerCase()}</Text>
+                  </View>
+                </View>
+                {rooms.map(renderCard)}
+              </View>
+            ))
           )}
         </View>
       </ScrollView>
@@ -359,8 +390,8 @@ export default function CalendarScreen() {
               />
             </View>
 
-            <Text style={styles.modalRoomText}>{t.room} {selectedRoom?.number}</Text>
-            <Text style={styles.modalText}>{t.type}: {selectedRoom?.type || '-'}</Text>
+            <Text style={styles.modalRoomText}>{selectedRoom?.type || (activeTab === 'monthly' ? t.monthly : t.daily)}</Text>
+            <Text style={styles.modalText}>{t.floor}: {floorOf(selectedRoom?.number)}</Text>
             <Text style={styles.modalText}>
               {t.price}: ฿{Number(selectedRoom?.price || 0).toLocaleString()} {activeTab === 'monthly' ? t.month : t.night}
             </Text>
@@ -374,18 +405,23 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#EEF4FB',
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 18,
-    paddingBottom: 14,
+    paddingBottom: 16,
     backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomLeftRadius: 26,
+    borderBottomRightRadius: 26,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   backButton: {
     width: 40,
@@ -447,19 +483,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 12,
-    borderRadius: 16,
+    paddingVertical: 13,
+    borderRadius: 18,
     backgroundColor: 'white',
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#E7EDF4',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 1,
   },
   tabButtonActiveDaily: {
     backgroundColor: '#F59E0B',
     borderColor: '#F59E0B',
+    shadowColor: '#F59E0B',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
   },
   tabButtonActiveMonthly: {
     backgroundColor: '#8B5CF6',
     borderColor: '#8B5CF6',
+    shadowColor: '#8B5CF6',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
   },
   tabButtonText: {
     fontSize: 13,
@@ -471,22 +522,31 @@ const styles = StyleSheet.create({
   },
   calendarBox: {
     marginHorizontal: 16,
-    marginTop: 14,
-    borderRadius: 20,
+    marginTop: 16,
+    borderRadius: 24,
     overflow: 'hidden',
     backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    padding: 6,
+    shadowColor: '#0EA5E9',
+    shadowOpacity: 0.10,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   dayInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     marginHorizontal: 16,
-    marginTop: 14,
-    padding: 14,
-    borderRadius: 16,
+    marginTop: 16,
+    padding: 16,
+    borderRadius: 20,
     backgroundColor: '#0EA5E9',
+    shadowColor: '#0EA5E9',
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   dayInfoIcon: {
     width: 34,
@@ -508,13 +568,16 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)',
   },
   listBox: {
-    marginTop: 14,
+    marginTop: 16,
     marginHorizontal: 16,
-    padding: 16,
-    borderRadius: 20,
+    padding: 18,
+    borderRadius: 24,
     backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
   listHeaderRow: {
     flexDirection: 'row',
@@ -532,21 +595,63 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0EA5E9',
   },
+  floorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  floorBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: '#0EA5E9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  floorBadgeText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: 'white',
+  },
+  floorTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  floorCountChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#E0F2FE',
+  },
+  floorCountText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0369A1',
+  },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 14,
-    borderRadius: 16,
-    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    backgroundColor: 'white',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: '#EFF3F8',
     marginBottom: 10,
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   cardIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 46,
+    height: 46,
+    borderRadius: 15,
     backgroundColor: '#E0F2FE',
     alignItems: 'center',
     justifyContent: 'center',
@@ -557,16 +662,25 @@ const styles = StyleSheet.create({
     color: '#0F172A',
   },
   cardType: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 2,
+    fontSize: 13,
+    color: '#0EA5E9',
+    fontWeight: '800',
+    marginTop: 3,
   },
   availableChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: '#DCFCE7',
+  },
+  availableChipDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#22C55E',
   },
   availableChipText: {
     fontSize: 11,

@@ -32,13 +32,19 @@ export default function BillScreen() {
 
   const bookingId = params.bookingId;
   const bookingRef = params.bookingRef;
-  const roomNumber = params.roomNumber;
   const checkInDate = params.checkInDate;
   const checkOutDate = params.checkOutDate;
   const rentType = params.rentType;
   const totalPrice = Number(params.totalPrice || 0);
   const holdExpiresAt = params.holdExpiresAt || null;
   const emailSent = params.emailSent === '1';
+
+  // โหมดจองหลายห้อง (รายวันสไตล์ Agoda) — bill รับ bookingIds เป็นรายการ แล้วรวมจ่ายครั้งเดียว
+  const bookingIds = params.bookingIds ? String(params.bookingIds).split(',').filter(Boolean) : null;
+  const isBatch = Array.isArray(bookingIds) && bookingIds.length > 0;
+  // ป้ายชื่อห้อง: batch = "101, 102, 103" · เดี่ยว = เลขห้องเดียว
+  const roomNumber = params.roomNumbers || params.roomNumber;
+  const roomCount = isBatch ? bookingIds.length : 1;
 
   const isMonthly = rentType === 'monthly';
   const canPayNow = !!holdExpiresAt;
@@ -95,7 +101,10 @@ export default function BillScreen() {
       setPayError(null);
       setPaymentStarted(true);
       setPayDeadline(new Date(Date.now() + 5 * 60 * 1000)); // ตรึงเป็น 5:00 เสมอ ไม่สุ่มตามเวลาที่เหลือจริง
-      const res = await api.post(`/booking/${bookingId}/pay-now`);
+      // batch → รวม QR ทุกห้องเป็นยอดเดียว · เดี่ยว → pay-now ต่อ booking เดิม
+      const res = isBatch
+        ? await api.post('/booking/batch/pay-now', { bookingIds })
+        : await api.post(`/booking/${bookingId}/pay-now`);
       if (res.data?.success && res.data.data?.qrImage) setQr(res.data.data);
       else setPayError(res.data?.message || 'สร้าง QR ไม่สำเร็จ');
     } catch (err) {
@@ -127,8 +136,13 @@ export default function BillScreen() {
       setLoading(true);
       setSlipError(null);
       const form = new FormData();
-      form.append('invoice_id', String(qr.invoiceId));
-      form.append('payment_method', 'โอนเงิน');
+      if (isBatch) {
+        // รวมจ่าย: ส่งรายการ invoice ทั้งหมดของทุกห้อง ปิดด้วยสลิปใบเดียว
+        form.append('invoice_ids', JSON.stringify(qr.invoiceIds || []));
+      } else {
+        form.append('invoice_id', String(qr.invoiceId));
+        form.append('payment_method', 'โอนเงิน');
+      }
       const fileName = slip.fileName || `slip_${Date.now()}.jpg`;
       if (Platform.OS === 'web') {
         // เว็บ: ต้องแนบเป็น Blob จริง — ส่ง {uri,name,type} แบบ RN ตรงๆ จะกลายเป็น "[object Object]" แทนไฟล์
@@ -141,7 +155,7 @@ export default function BillScreen() {
           type: slip.mimeType || 'image/jpeg',
         });
       }
-      const res = await api.post('/payment', form);
+      const res = await api.post(isBatch ? '/payment/batch' : '/payment', form);
       if (res.data?.success) setSubmitted(true);
       else setSlipError(res.data?.message || 'แจ้งชำระไม่สำเร็จ');
     } catch (err) {
@@ -156,7 +170,9 @@ export default function BillScreen() {
   const cancelAndGoHome = async () => {
     if (canPayNow && !submitted && !expired) {
       try {
-        await api.put(`/editBooking/${bookingId}`, { status: 'ยกเลิก' });
+        // batch → ยกเลิกทุกห้องที่จองไว้ · เดี่ยว → ยกเลิกการจองเดียว
+        const ids = isBatch ? bookingIds : [bookingId];
+        await Promise.all(ids.map((id) => api.put(`/editBooking/${id}`, { status: 'ยกเลิก' })));
       } catch (_err) {
         // best-effort — ถ้ายกเลิกไม่สำเร็จ cron จะเก็บกวาดให้เองตอนหมดเวลา
       }
@@ -174,7 +190,7 @@ export default function BillScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>ชำระค่าจอง</Text>
-          <Text style={styles.headerSub}>เลขที่การจอง {bookingRef}</Text>
+          <Text style={styles.headerSub}>{isBatch ? `จองรวม ${roomCount} ห้อง` : `เลขที่การจอง ${bookingRef}`}</Text>
         </View>
       </View>
 
@@ -182,7 +198,7 @@ export default function BillScreen() {
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.heroLabel}>ห้องพัก</Text>
+              <Text style={styles.heroLabel}>{isBatch ? `ห้องพัก ${roomCount} ห้อง` : 'ห้องพัก'}</Text>
               <Text style={styles.heroRoom}>{roomNumber}</Text>
               <Text style={styles.heroMonth}>{isMonthly ? 'ห้องพักรายเดือน' : 'ห้องพักรายวัน'}</Text>
             </View>
@@ -224,7 +240,7 @@ export default function BillScreen() {
         </View>
 
         <View style={styles.billCard}>
-          <SummaryRow label="ห้องพัก" value={`ห้อง ${roomNumber}`} />
+          <SummaryRow label={isBatch ? `ห้องพัก (${roomCount} ห้อง)` : 'ห้องพัก'} value={isBatch ? roomNumber : `ห้อง ${roomNumber}`} />
           <SummaryRow label="วันเข้าพัก" value={checkInDate} />
           {!isMonthly && <SummaryRow label="วันออก" value={checkOutDate} />}
           <View style={styles.detailDivider} />
