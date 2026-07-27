@@ -1,7 +1,7 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -26,28 +26,69 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
+  const [remember, setRemember] = useState(false);
+
+  // สำหรับล็อกอินด้วย Email — หน้าต่างกรอกอีเมล/รหัสผ่าน + สถานะกำลังโหลด
+  const [emailModalVisible, setEmailModalVisible] = useState(false);
+  const [emailStep, setEmailStep] = useState('email'); // 'email' | 'password'
+  const [emailInput, setEmailInput] = useState('');
+  const [emailPassword, setEmailPassword] = useState('');
+  const [showEmailPassword, setShowEmailPassword] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
 
   const [error, setError] = useState({
     username: false,
     password: false,
   });
 
+  // ref สำหรับกด Enter แล้วเลื่อนจากช่องชื่อผู้ใช้ไปช่องรหัสผ่าน
+  const passwordRef = useRef(null);
+
   const text = {
     TH: {
       welcome: 'ยินดีต้อนรับ', email: 'ชื่อผู้ใช้งาน (Username)', pass: 'รหัสผ่าน', forgot: 'ลืมรหัสผ่าน?',
       login: 'เข้าสู่ระบบ', noAcc: 'ยังไม่มีบัญชี? ', reg: 'สมัครสมาชิกใหม่', back: 'กลับสู่หน้าหลัก',
       error: 'กรุณากรอกข้อมูลให้ครบถ้วน', fail: 'ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง',
-      or: 'หรือเข้าสู่ระบบด้วย', loginEmail: 'เข้าสู่ระบบด้วย Email', loginLine: 'เข้าสู่ระบบด้วย LINE'
+      or: 'หรือเข้าสู่ระบบด้วย', loginEmail: 'เข้าสู่ระบบด้วย Email', loginLine: 'เข้าสู่ระบบด้วย LINE',
+      remember: 'จำรหัสผ่าน', emailLabel: 'อีเมล (Email)', emailPh: 'you@example.com',
+      emailTitle: 'เข้าสู่ระบบด้วยอีเมล', emailDesc: 'กรอกอีเมลของคุณเพื่อดำเนินการต่อ',
+      emailInvalid: 'กรุณากรอกอีเมลให้ถูกต้อง', wait: 'กรุณารอสักครู่...',
+      cancel: 'ยกเลิก', next: 'ถัดไป',
+      pwWelcome: 'ยินดีต้อนรับ', pwPlaceholder: 'กรอกรหัสผ่าน', pwShow: 'แสดงรหัสผ่าน',
+      pwEmpty: 'กรุณากรอกรหัสผ่าน'
     },
     EN: {
       welcome: 'Welcome Back', email: 'Username', pass: 'Password', forgot: 'Forgot Password?',
       login: 'Login', noAcc: "Don't have an account? ", reg: 'Register Now', back: 'Back to Home',
       error: 'Please fill in all fields', fail: 'Invalid username or password',
-      or: 'Or connect with', loginEmail: 'Sign in with Email', loginLine: 'Sign in with LINE'
+      or: 'Or connect with', loginEmail: 'Sign in with Email', loginLine: 'Sign in with LINE',
+      remember: 'Remember password', emailLabel: 'Email', emailPh: 'you@example.com',
+      emailTitle: 'Sign in with Email', emailDesc: 'Enter your email to continue',
+      emailInvalid: 'Please enter a valid email', wait: 'Please wait...',
+      cancel: 'Cancel', next: 'Next',
+      pwWelcome: 'Welcome', pwPlaceholder: 'Enter your password', pwShow: 'Show password',
+      pwEmpty: 'Please enter your password'
     }
   };
 
   const t = text[lang];
+
+  // โหลดข้อมูลที่จำไว้ตอนเปิดหน้า (ถ้าเคยติ๊ก "จำรหัสผ่าน")
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem('savedCredentials');
+        if (saved) {
+          const cred = JSON.parse(saved);
+          setUsername(cred.username || '');
+          setPassword(cred.password || '');
+          setRemember(true);
+        }
+      } catch (e) {
+        // เพิกเฉยหากอ่านค่าไม่ได้
+      }
+    })();
+  }, []);
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -65,11 +106,19 @@ export default function LoginScreen() {
 
     try {
       // 1. เรียก login — ได้ token + payload (id, username, role)
+      // ส่งค่าที่กรอก (username หรือ email) ไปในฟิลด์ username ให้ backend ตรวจสอบ
       const loginRes = await api.post('/login', { username, password });
       const { token, payload } = loginRes.data;
 
       // 2. บันทึก token ไว้ใช้กับทุก request หลังจากนี้
       await AsyncStorage.setItem('token', token);
+
+      // 2.1 จำรหัสผ่านไว้ถ้าผู้ใช้ติ๊กไว้ ไม่งั้นลบทิ้ง
+      if (remember) {
+        await AsyncStorage.setItem('savedCredentials', JSON.stringify({ username, password }));
+      } else {
+        await AsyncStorage.removeItem('savedCredentials');
+      }
 
       // 3. เรียก current-user เพื่อดึง full_name, email, phone_number
       const profileRes = await api.get('/current-user');
@@ -116,21 +165,75 @@ export default function LoginScreen() {
     }
   };
 
-  const handleAlternativeLogin = (type) => {
+  const openEmailModal = () => {
+    setEmailStep('email');
+    setEmailInput('');
+    setEmailPassword('');
+    setShowEmailPassword(false);
+    setEmailLoading(false);
+    setEmailModalVisible(true);
+  };
+
+  // ขั้นที่ 1: ตรวจอีเมล -> ไปหน้าจอกรอกรหัสผ่าน (การ์ดกลางจอ)
+  const handleEmailNext = () => {
+    const emailTrimmed = emailInput.trim();
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
+    if (!emailValid) {
+      showMessage({
+        message: lang === 'TH' ? 'แจ้งเตือน' : 'Warning',
+        description: t.emailInvalid,
+        type: 'danger', icon: 'danger', floating: true,
+      });
+      return;
+    }
+    setEmailStep('password');
+  };
+
+  // ขั้นที่ 2: กรอกรหัสผ่าน -> หมุนรอสักครู่ -> ไปหน้าสมัคร โดยล็อก username/password
+  const handleEmailPasswordNext = () => {
+    if (!emailPassword) {
+      showMessage({
+        message: lang === 'TH' ? 'แจ้งเตือน' : 'Warning',
+        description: t.pwEmpty,
+        type: 'danger', icon: 'danger', floating: true,
+      });
+      return;
+    }
+
+    const emailTrimmed = emailInput.trim();
+    setEmailLoading(true);
+    setTimeout(() => {
+      const generatedUsername = emailTrimmed.split('@')[0];
+
+      setEmailLoading(false);
+      setEmailModalVisible(false);
+
+      router.push({
+        pathname: '/register',
+        params: {
+          lockedEmail: emailTrimmed,
+          lockedUsername: generatedUsername,
+          lockedPassword: emailPassword,
+        },
+      });
+    }, 1500);
+  };
+
+  const handleLineLogin = () => {
     showMessage({
       message: lang === 'TH' ? 'ระบบกำลังพัฒนา' : 'Coming Soon',
-      description: lang === 'TH' ? `กำลังเชื่อมต่อกับระบบ ${type}` : `Connecting to ${type}...`,
+      description: lang === 'TH' ? 'การเข้าสู่ระบบด้วย LINE กำลังพัฒนา' : 'LINE login is coming soon.',
       type: 'info', icon: 'info', floating: true,
     });
   };
 
-  const renderInput = (label, icon, placeholder, value, onChangeText, secure = false) => (
+  const renderInput = (label, icon, placeholder, value, onChangeText, secure = false, keyboardType = 'default', inputProps = {}) => (
     <View style={{ marginBottom: 20 }}>
       <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#444', marginBottom: 8, marginLeft: 5 }}>{label}</Text>
       <View style={{
         flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA',
         borderRadius: 18, paddingHorizontal: 15, height: 60, borderWidth: 1,
-        borderColor: error[icon === 'mail' ? 'username' : 'password'] ? '#FF3B30' : '#E1E9F0'
+        borderColor: error[secure ? 'password' : 'username'] ? '#FF3B30' : '#E1E9F0'
       }}>
         <Feather name={icon} size={20} color="#0194F3" style={{ marginRight: 12 }} />
         <TextInput
@@ -140,7 +243,9 @@ export default function LoginScreen() {
           value={value}
           onChangeText={onChangeText}
           secureTextEntry={secure}
+          keyboardType={keyboardType}
           autoCapitalize="none"
+          {...inputProps}
         />
       </View>
     </View>
@@ -173,15 +278,38 @@ export default function LoginScreen() {
         </View>
 
         <View style={{ marginBottom: 20 }}>
-          {renderInput(t.email, 'mail', 'Username', username, setUsername)}
-          {renderInput(t.pass, 'lock', '••••••••', password, setPassword, true)}
+          {renderInput(t.email, 'user', 'Username', username, setUsername, false, 'default', {
+            returnKeyType: 'next',
+            onSubmitEditing: () => passwordRef.current?.focus(),
+            blurOnSubmit: false,
+          })}
+          {renderInput(t.pass, 'lock', '••••••••', password, setPassword, true, 'default', {
+            ref: passwordRef,
+            returnKeyType: 'go',
+            onSubmitEditing: () => { if (!loading) handleLogin(); },
+          })}
 
-          <TouchableOpacity
-            style={{ alignSelf: 'flex-end', marginTop: -5 }}
-            onPress={() => router.push('/editregister')}
-          >
-            <Text style={{ color: '#0194F3', fontWeight: 'bold', fontSize: 14 }}>{t.forgot}</Text>
-          </TouchableOpacity>
+          <View style={{ alignItems: 'flex-end', marginTop: -5 }}>
+            <TouchableOpacity onPress={() => router.push('/editregister')}>
+              <Text style={{ color: '#0194F3', fontWeight: 'bold', fontSize: 14 }}>{t.forgot}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setRemember(!remember)}
+              activeOpacity={0.7}
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}
+            >
+              <View style={{
+                width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+                borderColor: remember ? '#0194F3' : '#B0BCC7',
+                backgroundColor: remember ? '#0194F3' : 'transparent',
+                justifyContent: 'center', alignItems: 'center', marginRight: 8
+              }}>
+                {remember && <Feather name="check" size={15} color="white" />}
+              </View>
+              <Text style={{ color: '#444', fontSize: 14 }}>{t.remember}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <TouchableOpacity
@@ -211,7 +339,7 @@ export default function LoginScreen() {
               backgroundColor: '#F8F9FA', paddingVertical: 15, borderRadius: 20,
               borderWidth: 1, borderColor: '#E1E9F0'
             }}
-            onPress={() => handleAlternativeLogin('Email')}
+            onPress={openEmailModal}
           >
             <Feather name="mail" size={20} color="#0194F3" style={{ marginRight: 10 }} />
             <Text style={{ color: '#444', fontSize: 16, fontWeight: 'bold' }}>{t.loginEmail}</Text>
@@ -222,7 +350,7 @@ export default function LoginScreen() {
               flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
               backgroundColor: '#06C755', paddingVertical: 15, borderRadius: 20
             }}
-            onPress={() => handleAlternativeLogin('LINE')}
+            onPress={handleLineLogin}
           >
             <Ionicons name="chatbubble" size={20} color="white" style={{ marginRight: 10 }} />
             <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>{t.loginLine}</Text>
@@ -243,6 +371,137 @@ export default function LoginScreen() {
           <Text style={{ color: '#BBB', fontSize: 13 }}>{t.back}</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* หน้าต่างกรอกอีเมลสำหรับล็อกอินด้วย Email */}
+      <Modal
+        visible={emailModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!emailLoading) setEmailModalVisible(false); }}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 25 }}>
+          <View style={{ width: '100%', backgroundColor: 'white', borderRadius: 22, padding: 24 }}>
+            {emailLoading ? (
+              <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                <ActivityIndicator size="large" color="#0194F3" />
+                <Text style={{ fontSize: 16, color: '#444', marginTop: 16 }}>{t.wait}</Text>
+              </View>
+            ) : emailStep === 'email' ? (
+              <>
+                <View style={{ alignItems: 'center', marginBottom: 18 }}>
+                  <View style={{
+                    width: 60, height: 60, borderRadius: 20, backgroundColor: '#F0F8FF',
+                    justifyContent: 'center', alignItems: 'center', marginBottom: 12
+                  }}>
+                    <Feather name="mail" size={28} color="#0194F3" />
+                  </View>
+                  <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222' }}>{t.emailTitle}</Text>
+                  <Text style={{ fontSize: 14, color: '#777', marginTop: 6, textAlign: 'center' }}>{t.emailDesc}</Text>
+                </View>
+
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA',
+                  borderRadius: 16, paddingHorizontal: 15, height: 58, borderWidth: 1, borderColor: '#E1E9F0',
+                  marginBottom: 18
+                }}>
+                  <Feather name="mail" size={20} color="#0194F3" style={{ marginRight: 12 }} />
+                  <TextInput
+                    style={{ flex: 1, fontSize: 16 }}
+                    placeholder={t.emailPh}
+                    placeholderTextColor="#B0BCC7"
+                    value={emailInput}
+                    onChangeText={setEmailInput}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoFocus
+                  />
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => setEmailModalVisible(false)}
+                    style={{ flex: 1, backgroundColor: '#E6E6E6', paddingVertical: 14, borderRadius: 14, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#444', fontWeight: 'bold', fontSize: 15 }}>{t.cancel}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleEmailNext}
+                    style={{ flex: 1, backgroundColor: '#0194F3', paddingVertical: 14, borderRadius: 14, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>{t.next}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                {/* การ์ดกรอกรหัสผ่าน วางกลางจอ (สไตล์แอป Around Loei) */}
+                <View style={{ alignItems: 'flex-start', marginBottom: 18 }}>
+                  <View style={{
+                    width: 48, height: 48, borderRadius: 15, backgroundColor: '#0194F3',
+                    justifyContent: 'center', alignItems: 'center', marginBottom: 16
+                  }}>
+                    <Ionicons name="business" size={24} color="white" />
+                  </View>
+                  <Text style={{ fontSize: 30, fontWeight: 'bold', color: '#222' }}>{t.pwWelcome}</Text>
+
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', marginTop: 14,
+                    borderWidth: 1, borderColor: '#E1E9F0', borderRadius: 999,
+                    paddingVertical: 6, paddingHorizontal: 12
+                  }}>
+                    <Feather name="user" size={16} color="#5F6368" style={{ marginRight: 8 }} />
+                    <Text style={{ fontSize: 14, color: '#3C4043' }} numberOfLines={1}>{emailInput.trim()}</Text>
+                  </View>
+                </View>
+
+                <View style={{
+                  backgroundColor: '#F8F9FA', borderRadius: 12, borderWidth: 1, borderColor: '#E1E9F0',
+                  paddingHorizontal: 14, height: 58, flexDirection: 'row', alignItems: 'center'
+                }}>
+                  <TextInput
+                    style={{ flex: 1, fontSize: 16 }}
+                    placeholder={t.pwPlaceholder}
+                    placeholderTextColor="#B0BCC7"
+                    value={emailPassword}
+                    onChangeText={setEmailPassword}
+                    secureTextEntry={!showEmailPassword}
+                    autoCapitalize="none"
+                    autoFocus
+                  />
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => setShowEmailPassword(!showEmailPassword)}
+                  activeOpacity={0.7}
+                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14 }}
+                >
+                  <View style={{
+                    width: 20, height: 20, borderRadius: 4, borderWidth: 2,
+                    borderColor: showEmailPassword ? '#0194F3' : '#B0BCC7',
+                    backgroundColor: showEmailPassword ? '#0194F3' : 'transparent',
+                    justifyContent: 'center', alignItems: 'center', marginRight: 10
+                  }}>
+                    {showEmailPassword && <Feather name="check" size={13} color="white" />}
+                  </View>
+                  <Text style={{ color: '#3C4043', fontSize: 14 }}>{t.pwShow}</Text>
+                </TouchableOpacity>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 26 }}>
+                  <TouchableOpacity onPress={() => { setEmailModalVisible(false); router.push('/editregister'); }}>
+                    <Text style={{ color: '#0194F3', fontWeight: 'bold', fontSize: 14 }}>{t.forgot}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleEmailPasswordNext}
+                    style={{ backgroundColor: '#0194F3', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 999 }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>{t.next}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={successVisible} transparent animationType="fade" onRequestClose={() => setSuccessVisible(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>

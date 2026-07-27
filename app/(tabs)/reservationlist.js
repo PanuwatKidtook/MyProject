@@ -88,7 +88,12 @@ export default function ReservationListScreen() {
     const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
     if (!m) return String(v);
     const [, y, mo, d, hh, mm] = m;
-    return `${Number(d)} ${THAI_MONTHS[Number(mo) - 1]} ${Number(y) + 543} ${hh}:${mm} น.`;
+    // ค่าจากเซิร์ฟเวอร์เป็น UTC — แปลงเป็นเวลาไทย (+7) ก่อนแสดง (รองรับข้ามวัน/เดือน)
+    const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm)));
+    dt.setUTCHours(dt.getUTCHours() + 7);
+    const HH = String(dt.getUTCHours()).padStart(2, '0');
+    const MM = String(dt.getUTCMinutes()).padStart(2, '0');
+    return `${dt.getUTCDate()} ${THAI_MONTHS[dt.getUTCMonth()]} ${dt.getUTCFullYear() + 543} ${HH}:${MM} น.`;
   };
 
   const isCancelledBooking = (item) => {

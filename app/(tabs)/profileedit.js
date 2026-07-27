@@ -11,7 +11,8 @@ import {
   Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  Modal
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -25,6 +26,8 @@ export default function ProfileEditScreen() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [successVisible, setSuccessVisible] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
 
   const [form, setForm] = useState({
@@ -81,6 +84,7 @@ export default function ProfileEditScreen() {
   const handleSave = async () => {
     try {
       setSaving(true);
+      setErrorMsg('');
 
       // 1. บันทึกไปยัง backend
       await api.put('/profile', {
@@ -100,12 +104,11 @@ export default function ProfileEditScreen() {
         phone_number: form.phone,
       }));
 
-      Alert.alert('สำเร็จ', 'บันทึกข้อมูลเรียบร้อยแล้ว', [
-        { text: 'ตกลง', onPress: () => router.back() }
-      ]);
+      // ใช้ Modal กลางจอแทน Alert (Alert.alert ไม่แสดงผลบน React Native Web)
+      setSuccessVisible(true);
     } catch (error) {
       const msg = error.response?.data?.message || 'ไม่สามารถบันทึกข้อมูลได้';
-      Alert.alert('เกิดข้อผิดพลาด', msg);
+      setErrorMsg(msg);
     } finally {
       setSaving(false);
     }
@@ -152,11 +155,18 @@ export default function ProfileEditScreen() {
           </View>
 
 
+          {errorMsg ? (
+            <View style={styles.errorBox}>
+              <Ionicons name="alert-circle" size={20} color="#DC2626" style={{ marginRight: 8 }} />
+              <Text style={styles.errorText}>{errorMsg}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>ข้อมูลทั่วไป</Text>
 
 
-            <Text style={styles.label}>UserName</Text>
+            <Text style={styles.label}>ชื่อ-นามสกุล</Text>
             <TextInput
               value={form.name}
               editable={false}
@@ -203,6 +213,33 @@ export default function ProfileEditScreen() {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={successVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSuccessVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.successCard}>
+            <View style={styles.successIcon}>
+              <Ionicons name="checkmark-circle" size={56} color="#16A34A" />
+            </View>
+            <Text style={styles.successTitle}>อัปเดตข้อมูลแล้ว</Text>
+            <Text style={styles.successSub}>บันทึกข้อมูลโปรไฟล์เรียบร้อยแล้ว</Text>
+
+            <TouchableOpacity
+              style={styles.successButton}
+              onPress={() => {
+                setSuccessVisible(false);
+                router.back();
+              }}
+            >
+              <Text style={styles.successButtonText}>ตกลง</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -319,4 +356,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
   },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  errorText: { flex: 1, color: '#DC2626', fontSize: 13, fontWeight: '700' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+  },
+  successCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 26,
+    alignItems: 'center',
+  },
+  successIcon: { marginBottom: 10 },
+  successTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 6 },
+  successSub: { fontSize: 14, color: '#64748B', textAlign: 'center', marginBottom: 22 },
+  successButton: {
+    backgroundColor: '#0194F3',
+    paddingVertical: 13,
+    paddingHorizontal: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  successButtonText: { color: 'white', fontSize: 16, fontWeight: '900' },
 });

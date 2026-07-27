@@ -201,6 +201,7 @@ export default function MonthlyReservationScreen() {
           totalPrice: b.totalPrice,
           holdExpiresAt: b.holdExpiresAt || '',
           emailSent: b.emailSent ? '1' : '0',
+          beds: (String(detailRoom?.typeName || '').match(/(\d+)/) || [])[1] || '',
         }
       });
     } catch (error) {
@@ -254,6 +255,7 @@ export default function MonthlyReservationScreen() {
   // ประเภทห้องทั้งหมด (เตียงเดี่ยว/คู่/ฯลฯ) ไว้ทำชิปกรอง — เหมือนรายวัน
   const roomTypeNames = [...new Set(availability.map((r) => r.type_name || 'ห้องพักรายเดือน'))];
   const visibleRooms = availability
+    .filter((r) => r.available) // ห้องไม่ว่าง ไม่ต้องแสดง
     .filter((r) => !bedFilter || (r.type_name || 'ห้องพักรายเดือน') === bedFilter);
   const roomGroups = groupRoomsByType(visibleRooms); // การ์ดต่อห้อง แยกตามประเภท (เหมือนรายวัน)
 

@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,6 +22,10 @@ const { width, height } = Dimensions.get('window');
 
 export default function RegisterScreen() {
   const router = useRouter();
+  // รับค่าที่ถูกล็อกมาจากการล็อกอินด้วยอีเมล (ถ้ามี)
+  const { lockedEmail, lockedUsername, lockedPassword } = useLocalSearchParams();
+  const isEmailLocked = !!lockedUsername;
+
   const [lang, setLang] = useState('TH');
   const [loading, setLoading] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
@@ -33,10 +37,10 @@ export default function RegisterScreen() {
   const [termsError, setTermsError] = useState(false);
 
   const [full_name, setFullName] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState(lockedUsername || '');
+  const [password, setPassword] = useState(lockedPassword || '');
   const [phone_number, setPhoneNumber] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(lockedEmail || '');
   const [user_role, setUserRole] = useState('Daily_Tenant');
 
   const [errors, setErrors] = useState({
@@ -261,11 +265,12 @@ export default function RegisterScreen() {
               }}
             />
 
-            <InputBox 
-              label={t.email} 
-              icon="mail" 
-              placeholder="Username" 
+            <InputBox
+              label={t.email}
+              icon="mail"
+              placeholder="Username"
               autoCapitalize="none"
+              locked={isEmailLocked}
               value={username}
               error={errors.username}
               onChangeText={(text) => {
@@ -293,6 +298,7 @@ export default function RegisterScreen() {
               placeholder={t.emailPlace}
               keyboardType="email-address"
               autoCapitalize="none"
+              locked={isEmailLocked}
               value={email}
               onChangeText={setEmail}
             />
@@ -301,7 +307,8 @@ export default function RegisterScreen() {
               label={t.pass}
               icon="lock"
               placeholder="••••••••"
-              secureTextEntry={true}
+              secureTextEntry={!isEmailLocked}
+              locked={isEmailLocked}
               value={password}
               error={errors.password}
               onChangeText={(text) => {
@@ -599,31 +606,33 @@ export default function RegisterScreen() {
   );
 }
 
-const InputBox = ({ label, icon, error, ...props }) => (
+const InputBox = ({ label, icon, error, locked, ...props }) => (
   <View style={{ marginBottom: 20 }}>
     <Text style={{ fontSize: 14, fontWeight: 'bold', color: error ? '#FF3B30' : '#444', marginBottom: 8, marginLeft: 5 }}>
       {label}
     </Text>
-    <View style={{ 
+    <View style={{
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: 'white', 
+      backgroundColor: locked ? '#F0F1F3' : 'white',
       borderRadius: 18,
       paddingHorizontal: 15,
       height: 60,
-      borderWidth: error ? 1.5 : 1, 
+      borderWidth: error ? 1.5 : 1,
       borderColor: error ? '#FF3B30' : '#E1E9F0',
       elevation: 2,
-      shadowColor: '#000', 
+      shadowColor: '#000',
       shadowOpacity: 0.02,
       shadowRadius: 5
     }}>
       <Feather name={icon} size={20} color={error ? '#FF3B30' : '#0194F3'} style={{ marginRight: 12 }} />
-      <TextInput 
-        style={{ flex: 1, fontSize: 16, color: '#333' }}
+      <TextInput
+        style={{ flex: 1, fontSize: 16, color: locked ? '#8A94A0' : '#333' }}
         placeholderTextColor="#B0BCC7"
+        editable={!locked}
         {...props}
       />
+      {locked ? <Feather name="lock" size={16} color="#B0BCC7" /> : null}
     </View>
   </View>
 );

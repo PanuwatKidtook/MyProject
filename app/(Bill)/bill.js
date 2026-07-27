@@ -39,6 +39,7 @@ export default function BillScreen() {
   const totalPrice = Number(params.totalPrice || 0);
   const holdExpiresAt = params.holdExpiresAt || null;
   const emailSent = params.emailSent === '1';
+  const beds = params.beds ? Number(params.beds) : null; // จำนวนเตียงของห้องที่จอง (โชว์ในรายละเอียด)
 
   // จัดรูปแบบวันเดือนปี + เวลา (พ.ศ.) จาก timestamp ที่จองจริง — parse เอง กัน Hermes/timezone เพี้ยน
   const THAI_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
@@ -47,7 +48,12 @@ export default function BillScreen() {
     const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
     if (!m) return String(v);
     const [, y, mo, d, hh, mm] = m;
-    return `${Number(d)} ${THAI_MONTHS[Number(mo) - 1]} ${Number(y) + 543} ${hh}:${mm} น.`;
+    // ค่าจากเซิร์ฟเวอร์เป็น UTC — แปลงเป็นเวลาไทย (+7) ก่อนแสดง (รองรับข้ามวัน/เดือน)
+    const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm)));
+    dt.setUTCHours(dt.getUTCHours() + 7);
+    const HH = String(dt.getUTCHours()).padStart(2, '0');
+    const MM = String(dt.getUTCMinutes()).padStart(2, '0');
+    return `${dt.getUTCDate()} ${THAI_MONTHS[dt.getUTCMonth()]} ${dt.getUTCFullYear() + 543} ${HH}:${MM} น.`;
   };
 
   // โหมดจองหลายห้อง (รายวันสไตล์ Agoda) — bill รับ bookingIds เป็นรายการ แล้วรวมจ่ายครั้งเดียว
@@ -252,6 +258,7 @@ export default function BillScreen() {
 
         <View style={styles.billCard}>
           <SummaryRow label="ห้องพัก" value={isBatch ? `${roomCount} ห้อง` : (isMonthly ? 'รอยืนยันที่เคาน์เตอร์' : `ห้อง ${roomNumber}`)} />
+          {beds ? <SummaryRow label="จำนวนเตียง" value={`${beds} เตียง`} /> : null}
           <SummaryRow label="วันเข้าพัก" value={checkInDate} />
           {!isMonthly && <SummaryRow label="วันออก" value={checkOutDate} />}
           <SummaryRow label="เวลาที่จอง" value={formatDateTime(bookedAt)} />
