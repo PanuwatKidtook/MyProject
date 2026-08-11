@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
+import { startGoogleLogin, startLineLogin } from '../../lib/socialAuth';
 
 const { width } = Dimensions.get('window');
 
@@ -49,7 +50,7 @@ export default function LoginScreen() {
       welcome: 'ยินดีต้อนรับ', email: 'ชื่อผู้ใช้งาน (Username)', pass: 'รหัสผ่าน', forgot: 'ลืมรหัสผ่าน?',
       login: 'เข้าสู่ระบบ', noAcc: 'ยังไม่มีบัญชี? ', reg: 'สมัครสมาชิกใหม่', back: 'กลับสู่หน้าหลัก',
       error: 'กรุณากรอกข้อมูลให้ครบถ้วน', fail: 'ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง',
-      or: 'หรือเข้าสู่ระบบด้วย', loginEmail: 'เข้าสู่ระบบด้วย Email', loginLine: 'เข้าสู่ระบบด้วย LINE',
+      or: 'หรือเข้าสู่ระบบด้วย', loginEmail: 'เข้าสู่ระบบด้วย Google', loginLine: 'เข้าสู่ระบบด้วย LINE',
       remember: 'จำรหัสผ่าน', emailLabel: 'อีเมล (Email)', emailPh: 'you@example.com',
       emailTitle: 'เข้าสู่ระบบด้วยอีเมล', emailDesc: 'กรอกอีเมลของคุณเพื่อดำเนินการต่อ',
       emailInvalid: 'กรุณากรอกอีเมลให้ถูกต้อง', wait: 'กรุณารอสักครู่...',
@@ -61,7 +62,7 @@ export default function LoginScreen() {
       welcome: 'Welcome Back', email: 'Username', pass: 'Password', forgot: 'Forgot Password?',
       login: 'Login', noAcc: "Don't have an account? ", reg: 'Register Now', back: 'Back to Home',
       error: 'Please fill in all fields', fail: 'Invalid username or password',
-      or: 'Or connect with', loginEmail: 'Sign in with Email', loginLine: 'Sign in with LINE',
+      or: 'Or connect with', loginEmail: 'Sign in with Google', loginLine: 'Sign in with LINE',
       remember: 'Remember password', emailLabel: 'Email', emailPh: 'you@example.com',
       emailTitle: 'Sign in with Email', emailDesc: 'Enter your email to continue',
       emailInvalid: 'Please enter a valid email', wait: 'Please wait...',
@@ -219,12 +220,164 @@ export default function LoginScreen() {
     }, 1500);
   };
 
-  const handleLineLogin = () => {
-    showMessage({
-      message: lang === 'TH' ? 'ระบบกำลังพัฒนา' : 'Coming Soon',
-      description: lang === 'TH' ? 'การเข้าสู่ระบบด้วย LINE กำลังพัฒนา' : 'LINE login is coming soon.',
-      type: 'info', icon: 'info', floating: true,
-    });
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    try {
+      // 1. เปิดหน้า Google -> รอ redirect กลับพร้อม code
+      const { code, redirectUri } = await startGoogleLogin();
+
+      // 2. แลก code เป็น JWT ที่ backend (endpoint public)
+      const exchangeRes = await api.post('/auth/google/exchange', {
+        code,
+        redirect_uri: redirectUri,
+      });
+      const { token, payload, isNewUser } = exchangeRes.data;
+
+      // 3. เก็บ token ไว้ใช้กับทุก request หลังจากนี้
+      //    ผู้ใช้ใหม่: token เป็น "pending" — ยังไม่มี member ใน backend จนกว่าจะกดยืนยันหน้าสมัคร
+      await AsyncStorage.setItem('token', token);
+
+      // 4. ผู้ใช้ใหม่ → ยังไม่ถูกบันทึก แวะหน้าสมัครก่อน เพื่อเลือกประเภทผู้เช่า/ตั้งรหัสผ่าน
+      //    ใช้โปรไฟล์ที่ backend ส่งมากับ exchange โดยตรง ไม่เรียก /current-user (member ยังไม่ถูกสร้าง)
+      if (isNewUser) {
+        const gProfile = exchangeRes.data.profile || {};
+        router.push({
+          pathname: '/register',
+          params: {
+            source: 'google',
+            lockedFullName: gProfile.full_name || payload.username || '',
+            lockedEmail: gProfile.email || '',
+            lockedUsername: payload.username || '',
+          },
+        });
+        return;
+      }
+
+      // 5. ผู้ใช้เดิม → ดึงโปรไฟล์เต็ม (ชื่อ/อีเมล) แล้วเข้าสู่ระบบได้เลย
+      const profileRes = await api.get('/current-user');
+      const profileData = profileRes.data.data;
+
+      const userProfile = {
+        id: payload.id,
+        username: payload.username,
+        name: profileData.full_name || payload.username,
+        full_name: profileData.full_name,
+        email: profileData.email,
+        phone_number: profileData.phone_number,
+        role: payload.role,
+        isLoggedIn: true,
+      };
+      await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
+
+      showMessage({
+        message: lang === 'TH' ? 'สำเร็จ' : 'Success',
+        description: lang === 'TH' ? 'เข้าสู่ระบบเรียบร้อยแล้ว' : 'Login Successful',
+        type: 'success', icon: 'success', floating: true,
+      });
+      setSuccessVisible(true);
+    } catch (err) {
+      // ผู้ใช้กดยกเลิกเอง — ไม่ต้องเด้ง error
+      if (err.code === 'cancelled') return;
+
+      if (!err.response) {
+        showMessage({
+          message: lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
+          description: err.message || (lang === 'TH'
+            ? 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ในขณะนี้'
+            : 'Cannot connect to the server.'),
+          type: 'danger', icon: 'danger', floating: true,
+        });
+      } else {
+        showMessage({
+          message: lang === 'TH' ? 'เข้าสู่ระบบล้มเหลว' : 'Login Failed',
+          description: err.response?.data?.message
+            || (lang === 'TH' ? 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ' : 'Google login failed.'),
+          type: 'danger', icon: 'danger', floating: true,
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLineLogin = async () => {
+    setLoading(true);
+    try {
+      // 1. เปิดหน้า LINE -> รอ redirect กลับ deep link พร้อม code
+      const { code, redirectUri } = await startLineLogin();
+
+      // 2. แลก code เป็น JWT ที่ backend (endpoint public)
+      const exchangeRes = await api.post('/auth/line/exchange', {
+        code,
+        redirect_uri: redirectUri,
+      });
+      const { token, payload, isNewUser } = exchangeRes.data;
+
+      // 3. เก็บ token ไว้ใช้กับทุก request หลังจากนี้
+      await AsyncStorage.setItem('token', token);
+
+      // 4. ดึงโปรไฟล์เต็ม (ชื่อ/อีเมล ที่ได้จาก LINE)
+      const profileRes = await api.get('/current-user');
+      const profileData = profileRes.data.data;
+
+      // 5. ผู้ใช้ใหม่ที่เพิ่งสมัครผ่าน LINE → แวะหน้าสมัครก่อน เพื่อกรอกเบอร์โทร/รหัสผ่าน
+      //    และเลือกประเภทผู้เช่า (รายวัน/รายเดือน) เอง — ไม่ถูกล็อกเป็นรายวันอัตโนมัติ
+      //    ล็อกช่องที่ได้จาก LINE ไว้: ชื่อ-นามสกุล, อีเมล, Username (token ถูกเก็บแล้วใช้ยืนยันตอนเติมโปรไฟล์)
+      if (isNewUser) {
+        router.push({
+          pathname: '/register',
+          params: {
+            source: 'line',
+            lockedFullName: profileData.full_name || payload.username || '',
+            lockedEmail: profileData.email || '',
+            lockedUsername: payload.username || '',
+          },
+        });
+        return;
+      }
+
+      // 6. ผู้ใช้เดิม (เคยเติมโปรไฟล์แล้ว) → เข้าสู่ระบบได้เลย
+      const userProfile = {
+        id: payload.id,
+        username: payload.username,
+        name: profileData.full_name || payload.username,
+        full_name: profileData.full_name,
+        email: profileData.email,
+        phone_number: profileData.phone_number,
+        role: payload.role,
+        isLoggedIn: true,
+      };
+      await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
+
+      showMessage({
+        message: lang === 'TH' ? 'สำเร็จ' : 'Success',
+        description: lang === 'TH' ? 'เข้าสู่ระบบเรียบร้อยแล้ว' : 'Login Successful',
+        type: 'success', icon: 'success', floating: true,
+      });
+      setSuccessVisible(true);
+    } catch (err) {
+      // ผู้ใช้กดยกเลิกเอง — ไม่ต้องเด้ง error
+      if (err.code === 'cancelled') return;
+
+      if (!err.response) {
+        showMessage({
+          message: lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
+          description: err.message || (lang === 'TH'
+            ? 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ในขณะนี้'
+            : 'Cannot connect to the server.'),
+          type: 'danger', icon: 'danger', floating: true,
+        });
+      } else {
+        showMessage({
+          message: lang === 'TH' ? 'เข้าสู่ระบบล้มเหลว' : 'Login Failed',
+          description: err.response?.data?.message
+            || (lang === 'TH' ? 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ' : 'LINE login failed.'),
+          type: 'danger', icon: 'danger', floating: true,
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const renderInput = (label, icon, placeholder, value, onChangeText, secure = false, keyboardType = 'default', inputProps = {}) => (
@@ -339,18 +492,21 @@ export default function LoginScreen() {
               backgroundColor: '#F8F9FA', paddingVertical: 15, borderRadius: 20,
               borderWidth: 1, borderColor: '#E1E9F0'
             }}
-            onPress={openEmailModal}
+            onPress={handleGoogleLogin}
+            disabled={loading}
           >
-            <Feather name="mail" size={20} color="#0194F3" style={{ marginRight: 10 }} />
+            <Ionicons name="logo-google" size={20} color="#EA4335" style={{ marginRight: 10 }} />
             <Text style={{ color: '#444', fontSize: 16, fontWeight: 'bold' }}>{t.loginEmail}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={{
               flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-              backgroundColor: '#06C755', paddingVertical: 15, borderRadius: 20
+              backgroundColor: '#06C755', paddingVertical: 15, borderRadius: 20,
+              opacity: loading ? 0.6 : 1
             }}
             onPress={handleLineLogin}
+            disabled={loading}
           >
             <Ionicons name="chatbubble" size={20} color="white" style={{ marginRight: 10 }} />
             <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }}>{t.loginLine}</Text>

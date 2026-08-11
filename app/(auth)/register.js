@@ -1,4 +1,5 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
@@ -17,14 +18,30 @@ import {
   View
 } from 'react-native';
 import FlashMessage, { showMessage } from 'react-native-flash-message';
+import api from '../../lib/api';
 
 const { width, height } = Dimensions.get('window');
 
 export default function RegisterScreen() {
   const router = useRouter();
-  // รับค่าที่ถูกล็อกมาจากการล็อกอินด้วยอีเมล (ถ้ามี)
-  const { lockedEmail, lockedUsername, lockedPassword } = useLocalSearchParams();
-  const isEmailLocked = !!lockedUsername;
+  // รับค่าที่ถูกล็อกมาจากการล็อกอินด้วยอีเมล หรือ LINE (ถ้ามี)
+  const { lockedEmail, lockedUsername, lockedPassword, lockedFullName, source } = useLocalSearchParams();
+
+  // แยก 2 กรณี:
+  //  - email flow  : ล็อก username + email + password (ผู้ใช้กรอกเองตอนล็อกอินอีเมล) → สมัครบัญชีใหม่ปกติ
+  //  - social flow : LINE / Google — member ถูกสร้างตอน exchange แล้ว (role Daily ชั่วคราว)
+  //    หน้านี้แค่ "เติมโปรไฟล์" ผ่าน /auth/social/complete: ล็อก ชื่อ-นามสกุล + email + username
+  //    ที่ได้จาก provider แต่ให้กรอกเบอร์โทร/รหัสผ่าน และเลือกประเภทผู้เช่า (รายวัน/รายเดือน) เอง
+  //    *สำคัญ*: google ต้องเดินเส้นนี้ ไม่ใช่ /register เดิม ไม่งั้นจะสร้างบัญชีซ้ำ (ชนอีเมล) แล้ว
+  //    member ตัวจริงค้างเป็น Daily ตลอด
+  const isSocialFlow = source === 'line' || source === 'google';
+  const isEmailLocked = !isSocialFlow && !!lockedUsername;
+
+  // ธงล็อกรายช่อง
+  const lockFullName = isSocialFlow && !!lockedFullName;
+  const lockUsername = (isEmailLocked || isSocialFlow) && !!lockedUsername;
+  const lockEmail = (isEmailLocked || isSocialFlow) && !!lockedEmail;
+  const lockPassword = isEmailLocked; // social ให้ตั้งรหัสผ่านเอง
 
   const [lang, setLang] = useState('TH');
   const [loading, setLoading] = useState(false);
@@ -36,7 +53,7 @@ export default function RegisterScreen() {
   const [termsScrolledToBottom, setTermsScrolledToBottom] = useState(false);
   const [termsError, setTermsError] = useState(false);
 
-  const [full_name, setFullName] = useState('');
+  const [full_name, setFullName] = useState(lockedFullName || '');
   const [username, setUsername] = useState(lockedUsername || '');
   const [password, setPassword] = useState(lockedPassword || '');
   const [phone_number, setPhoneNumber] = useState('');
@@ -155,6 +172,35 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
+      if (isSocialFlow) {
+        // ผู้ใช้ใหม่จาก LINE/Google มี member อยู่แล้ว (สร้างตอน exchange) → เติมโปรไฟล์ ไม่ใช่สมัครซ้ำ
+        // token จาก social login ถูกเก็บไว้แล้ว api interceptor จะแนบให้อัตโนมัติ
+        const res = await api.post('/auth/social/complete', {
+          full_name,
+          phone_number,
+          password,
+          user_role,
+        });
+
+        const { token, payload } = res.data;
+        if (token) await AsyncStorage.setItem('token', token);
+
+        const userProfile = {
+          id: payload.id,
+          username: payload.username,
+          name: full_name || payload.username,
+          full_name,
+          email,
+          phone_number,
+          role: payload.role,
+          isLoggedIn: true,
+        };
+        await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
+
+        setSuccessVisible(true);
+        return;
+      }
+
       const response = await axios.post('https://projeccty3-server.onrender.com/api/register', {
         username: username,
         password: password,
@@ -253,10 +299,11 @@ export default function RegisterScreen() {
           </View>
 
           <View>
-            <InputBox 
-              label={t.name} 
-              icon="user" 
-              placeholder={t.namePlace} 
+            <InputBox
+              label={t.name}
+              icon="user"
+              placeholder={t.namePlace}
+              locked={lockFullName}
               value={full_name}
               error={errors.full_name}
               onChangeText={(text) => {
@@ -270,7 +317,7 @@ export default function RegisterScreen() {
               icon="mail"
               placeholder="Username"
               autoCapitalize="none"
-              locked={isEmailLocked}
+              locked={lockUsername}
               value={username}
               error={errors.username}
               onChangeText={(text) => {
@@ -298,7 +345,7 @@ export default function RegisterScreen() {
               placeholder={t.emailPlace}
               keyboardType="email-address"
               autoCapitalize="none"
-              locked={isEmailLocked}
+              locked={lockEmail}
               value={email}
               onChangeText={setEmail}
             />
@@ -307,8 +354,8 @@ export default function RegisterScreen() {
               label={t.pass}
               icon="lock"
               placeholder="••••••••"
-              secureTextEntry={!isEmailLocked}
-              locked={isEmailLocked}
+              secureTextEntry={!lockPassword}
+              locked={lockPassword}
               value={password}
               error={errors.password}
               onChangeText={(text) => {
@@ -584,7 +631,8 @@ export default function RegisterScreen() {
             <TouchableOpacity
               onPress={() => {
                 setSuccessVisible(false);
-                router.replace('/login');
+                // social (LINE/Google): ล็อกอินอยู่แล้ว → เข้าแอปเลย · สมัครปกติ → กลับไปหน้าเข้าสู่ระบบ
+                router.replace(isSocialFlow ? '/' : '/login');
               }}
               style={{
                 backgroundColor: '#0194F3',
