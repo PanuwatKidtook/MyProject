@@ -1,7 +1,9 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import * as WebBrowser from 'expo-web-browser';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -16,6 +18,10 @@ import {
 } from 'react-native';
 import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
+import { googleClientIds, isGoogleConfigured, loginWithGoogle } from '../../lib/socialAuth';
+
+// จำเป็นสำหรับ expo-auth-session — ปิด popup auth ที่ค้างให้เรียบร้อยหลัง redirect กลับ
+WebBrowser.maybeCompleteAuthSession();
 
 const { width } = Dimensions.get('window');
 
@@ -32,18 +38,32 @@ export default function LoginScreen() {
     password: false,
   });
 
+  // Google OAuth (expo-auth-session) — ขอ id_token จาก Google แล้วส่งให้ backend ตรวจ
+  const [, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest(googleClientIds);
+
+  // เมื่อ Google ตอบกลับสำเร็จ → เอา id_token ไปเข้าสู่ระบบกับ backend
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const idToken = googleResponse.params?.id_token;
+      if (idToken) handleGoogleLogin(idToken);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleResponse]);
+
   const text = {
     TH: {
       welcome: 'ยินดีต้อนรับ', email: 'ชื่อผู้ใช้งาน (Username)', pass: 'รหัสผ่าน', forgot: 'ลืมรหัสผ่าน?',
       login: 'เข้าสู่ระบบ', noAcc: 'ยังไม่มีบัญชี? ', reg: 'สมัครสมาชิกใหม่', back: 'กลับสู่หน้าหลัก',
       error: 'กรุณากรอกข้อมูลให้ครบถ้วน', fail: 'ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง',
-      or: 'หรือเข้าสู่ระบบด้วย', loginEmail: 'เข้าสู่ระบบด้วย Email', loginLine: 'เข้าสู่ระบบด้วย LINE'
+      or: 'หรือเข้าสู่ระบบด้วย', loginGoogle: 'เข้าสู่ระบบด้วย Google', loginLine: 'เข้าสู่ระบบด้วย LINE',
+      googleNotReady: 'ยังไม่ได้ตั้งค่า Google (ใส่ client id ใน app.json)', googleFail: 'เข้าสู่ระบบด้วย Google ไม่สำเร็จ'
     },
     EN: {
       welcome: 'Welcome Back', email: 'Username', pass: 'Password', forgot: 'Forgot Password?',
       login: 'Login', noAcc: "Don't have an account? ", reg: 'Register Now', back: 'Back to Home',
       error: 'Please fill in all fields', fail: 'Invalid username or password',
-      or: 'Or connect with', loginEmail: 'Sign in with Email', loginLine: 'Sign in with LINE'
+      or: 'Or connect with', loginGoogle: 'Sign in with Google', loginLine: 'Sign in with LINE',
+      googleNotReady: 'Google not configured (add client id in app.json)', googleFail: 'Google sign-in failed'
     }
   };
 
@@ -64,37 +84,10 @@ export default function LoginScreen() {
     setLoading(true);
 
     try {
-      // 1. เรียก login — ได้ token + payload (id, username, role)
+      // เรียก login — ได้ token + payload (id, username, role) แล้วบันทึก session
       const loginRes = await api.post('/login', { username, password });
       const { token, payload } = loginRes.data;
-
-      // 2. บันทึก token ไว้ใช้กับทุก request หลังจากนี้
-      await AsyncStorage.setItem('token', token);
-
-      // 3. เรียก current-user เพื่อดึง full_name, email, phone_number
-      const profileRes = await api.get('/current-user');
-      const profileData = profileRes.data.data;
-
-      // 4. บันทึก userProfile สำหรับแสดงผลใน UI
-      const userProfile = {
-        id: payload.id,
-        username: payload.username,
-        name: profileData.full_name || payload.username,
-        full_name: profileData.full_name,
-        email: profileData.email,
-        phone_number: profileData.phone_number,
-        role: payload.role,
-        isLoggedIn: true,
-      };
-      await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
-
-      showMessage({
-        message: lang === 'TH' ? 'สำเร็จ' : 'Success',
-        description: lang === 'TH' ? 'เข้าสู่ระบบเรียบร้อยแล้ว' : 'Login Successful',
-        type: 'success', icon: 'success', floating: true,
-      });
-      setSuccessVisible(true);
-
+      await finishSession(token, payload);
     } catch (err) {
       if (!err.response) {
         showMessage({
@@ -116,6 +109,64 @@ export default function LoginScreen() {
     }
   };
 
+  // บันทึก session หลัง login สำเร็จ (ใช้ร่วมทั้ง login ปกติ + Google)
+  //  1. เก็บ token  2. ดึงโปรไฟล์เต็มจาก /current-user  3. เก็บ userProfile ให้ UI ใช้
+  const finishSession = async (token, payload) => {
+    await AsyncStorage.setItem('token', token);
+
+    const profileRes = await api.get('/current-user');
+    const profileData = profileRes.data.data;
+
+    const userProfile = {
+      id: payload.id,
+      username: payload.username,
+      name: profileData.full_name || payload.username,
+      full_name: profileData.full_name,
+      email: profileData.email,
+      phone_number: profileData.phone_number,
+      role: payload.role,
+      isLoggedIn: true,
+    };
+    await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
+
+    showMessage({
+      message: lang === 'TH' ? 'สำเร็จ' : 'Success',
+      description: lang === 'TH' ? 'เข้าสู่ระบบเรียบร้อยแล้ว' : 'Login Successful',
+      type: 'success', icon: 'success', floating: true,
+    });
+    setSuccessVisible(true);
+  };
+
+  // เข้าสู่ระบบด้วย Google — เปิดหน้า Google ให้เลือกบัญชี
+  const handleGooglePress = async () => {
+    if (!isGoogleConfigured()) {
+      showMessage({
+        message: lang === 'TH' ? 'แจ้งเตือน' : 'Warning',
+        description: t.googleNotReady, type: 'info', icon: 'info', floating: true,
+      });
+      return;
+    }
+    await googlePromptAsync();
+  };
+
+  // เมื่อได้ id_token จาก Google → ส่งให้ backend ตรวจแล้วบันทึก session
+  const handleGoogleLogin = async (idToken) => {
+    setLoading(true);
+    try {
+      const data = await loginWithGoogle(idToken); // { token, payload, ... }
+      await finishSession(data.token, data.payload);
+    } catch (err) {
+      showMessage({
+        message: lang === 'TH' ? 'เข้าสู่ระบบล้มเหลว' : 'Login Failed',
+        description: err.response?.data?.message || t.googleFail,
+        type: 'danger', icon: 'danger', floating: true,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // LINE ยังไม่รองรับบน mobile (ต้องทำ deep-link แยก)
   const handleAlternativeLogin = (type) => {
     showMessage({
       message: lang === 'TH' ? 'ระบบกำลังพัฒนา' : 'Coming Soon',
@@ -209,12 +260,13 @@ export default function LoginScreen() {
             style={{
               flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
               backgroundColor: '#F8F9FA', paddingVertical: 15, borderRadius: 20,
-              borderWidth: 1, borderColor: '#E1E9F0'
+              borderWidth: 1, borderColor: '#E1E9F0', opacity: loading ? 0.7 : 1
             }}
-            onPress={() => handleAlternativeLogin('Email')}
+            onPress={handleGooglePress}
+            disabled={loading}
           >
-            <Feather name="mail" size={20} color="#0194F3" style={{ marginRight: 10 }} />
-            <Text style={{ color: '#444', fontSize: 16, fontWeight: 'bold' }}>{t.loginEmail}</Text>
+            <Ionicons name="logo-google" size={20} color="#DB4437" style={{ marginRight: 10 }} />
+            <Text style={{ color: '#444', fontSize: 16, fontWeight: 'bold' }}>{t.loginGoogle}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

@@ -9,9 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aroundloei.myproject"
     },
     "android": {
+      "package": "com.aroundloei.myproject",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -44,6 +46,11 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "googleWebClientId": "257842962448-bglvn841dleo5v174su70fsj1mkdcn64.apps.googleusercontent.com",
+      "googleAndroidClientId": "",
+      "googleIosClientId": ""
     }
   }
 }
