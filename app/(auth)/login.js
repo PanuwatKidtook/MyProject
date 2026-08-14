@@ -223,28 +223,27 @@ export default function LoginScreen() {
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
-      // 1. เปิดหน้า Google -> รอ redirect กลับพร้อม code
-      const { code, redirectUri } = await startGoogleLogin();
+      // 1. เปิดหน้า Google -> รอ id_token กลับมา (OIDC implicit flow, ไม่ต้องใช้ secret)
+      const { idToken } = await startGoogleLogin();
 
-      // 2. แลก code เป็น JWT ที่ backend (endpoint public)
-      const exchangeRes = await api.post('/auth/google/exchange', {
-        code,
-        redirect_uri: redirectUri,
+      // 2. ส่ง id_token ให้ backend ตรวจ (endpoint public, ไม่ต้องแลก code/secret)
+      const exchangeRes = await api.post('/auth/social', {
+        provider: 'google',
+        token: idToken,
       });
       const { token, payload, isNewUser } = exchangeRes.data;
 
-      // 3. เก็บ token ไว้ใช้กับทุก request หลังจากนี้
-      //    ผู้ใช้ใหม่: token เป็น "pending" — ยังไม่มี member ใน backend จนกว่าจะกดยืนยันหน้าสมัคร
-      await AsyncStorage.setItem('token', token);
-
-      // 4. ผู้ใช้ใหม่ → ยังไม่ถูกบันทึก แวะหน้าสมัครก่อน เพื่อเลือกประเภทผู้เช่า/ตั้งรหัสผ่าน
-      //    ใช้โปรไฟล์ที่ backend ส่งมากับ exchange โดยตรง ไม่เรียก /current-user (member ยังไม่ถูกสร้าง)
+      // 3. ผู้ใช้ใหม่ → ยังไม่เก็บอะไรลงเครื่องเลย (รวมถึง token) จนกว่าจะกดยืนยันที่หน้าสมัคร
+      //    ส่ง token ไปกับพารามิเตอร์ (pendingToken) เพื่อใช้ตอนกดยืนยัน — ถ้าเขากดกลับก่อนยืนยัน
+      //    จะไม่มี token/เซสชัน หรือข้อมูลใด ๆ ค้างในเครื่อง
+      //    ใช้โปรไฟล์ที่ backend ส่งมากับ exchange โดยตรง ไม่เรียก /current-user
       if (isNewUser) {
         const gProfile = exchangeRes.data.profile || {};
         router.push({
           pathname: '/register',
           params: {
             source: 'google',
+            pendingToken: token,
             lockedFullName: gProfile.full_name || payload.username || '',
             lockedEmail: gProfile.email || '',
             lockedUsername: payload.username || '',
@@ -252,6 +251,9 @@ export default function LoginScreen() {
         });
         return;
       }
+
+      // 4. ผู้ใช้เดิม → เก็บ token ไว้ใช้กับทุก request หลังจากนี้
+      await AsyncStorage.setItem('token', token);
 
       // 5. ผู้ใช้เดิม → ดึงโปรไฟล์เต็ม (ชื่อ/อีเมล) แล้วเข้าสู่ระบบได้เลย
       const profileRes = await api.get('/current-user');
@@ -313,21 +315,24 @@ export default function LoginScreen() {
       });
       const { token, payload, isNewUser } = exchangeRes.data;
 
-      // 3. เก็บ token ไว้ใช้กับทุก request หลังจากนี้
-      await AsyncStorage.setItem('token', token);
-
-      // 4. ดึงโปรไฟล์เต็ม (ชื่อ/อีเมล ที่ได้จาก LINE)
-      const profileRes = await api.get('/current-user');
+      // 3. ดึงโปรไฟล์เต็ม (ชื่อ/อีเมล ที่ได้จาก LINE)
+      //    แนบ token ทาง header ชั่วคราว — ยังไม่เก็บลงเครื่อง (interceptor จะไม่ทับเพราะยังไม่มี token ใน storage)
+      const profileRes = await api.get('/current-user', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const profileData = profileRes.data.data;
 
-      // 5. ผู้ใช้ใหม่ที่เพิ่งสมัครผ่าน LINE → แวะหน้าสมัครก่อน เพื่อกรอกเบอร์โทร/รหัสผ่าน
+      // 4. ผู้ใช้ใหม่ที่เพิ่งสมัครผ่าน LINE → แวะหน้าสมัครก่อน เพื่อกรอกเบอร์โทร/รหัสผ่าน
       //    และเลือกประเภทผู้เช่า (รายวัน/รายเดือน) เอง — ไม่ถูกล็อกเป็นรายวันอัตโนมัติ
-      //    ล็อกช่องที่ได้จาก LINE ไว้: ชื่อ-นามสกุล, อีเมล, Username (token ถูกเก็บแล้วใช้ยืนยันตอนเติมโปรไฟล์)
+      //    *ยังไม่เก็บ token ลงเครื่อง* จนกว่าจะกดยืนยันที่หน้าสมัคร — ส่งไปกับ pendingToken แทน
+      //    ถ้าเขากดกลับก่อนยืนยัน จะไม่มี token/เซสชัน หรือข้อมูลใด ๆ ค้างในเครื่อง
+      //    ล็อกช่องที่ได้จาก LINE ไว้: ชื่อ-นามสกุล, อีเมล, Username
       if (isNewUser) {
         router.push({
           pathname: '/register',
           params: {
             source: 'line',
+            pendingToken: token,
             lockedFullName: profileData.full_name || payload.username || '',
             lockedEmail: profileData.email || '',
             lockedUsername: payload.username || '',
@@ -335,6 +340,9 @@ export default function LoginScreen() {
         });
         return;
       }
+
+      // 5. ผู้ใช้เดิม → เก็บ token ไว้ใช้กับทุก request หลังจากนี้
+      await AsyncStorage.setItem('token', token);
 
       // 6. ผู้ใช้เดิม (เคยเติมโปรไฟล์แล้ว) → เข้าสู่ระบบได้เลย
       const userProfile = {

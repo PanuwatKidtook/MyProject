@@ -25,7 +25,7 @@ const { width, height } = Dimensions.get('window');
 export default function RegisterScreen() {
   const router = useRouter();
   // รับค่าที่ถูกล็อกมาจากการล็อกอินด้วยอีเมล หรือ LINE (ถ้ามี)
-  const { lockedEmail, lockedUsername, lockedPassword, lockedFullName, source } = useLocalSearchParams();
+  const { lockedEmail, lockedUsername, lockedPassword, lockedFullName, source, pendingToken } = useLocalSearchParams();
 
   // แยก 2 กรณี:
   //  - email flow  : ล็อก username + email + password (ผู้ใช้กรอกเองตอนล็อกอินอีเมล) → สมัครบัญชีใหม่ปกติ
@@ -174,7 +174,9 @@ export default function RegisterScreen() {
     try {
       if (isSocialFlow) {
         // ผู้ใช้ใหม่จาก LINE/Google มี member อยู่แล้ว (สร้างตอน exchange) → เติมโปรไฟล์ ไม่ใช่สมัครซ้ำ
-        // token จาก social login ถูกเก็บไว้แล้ว api interceptor จะแนบให้อัตโนมัติ
+        // ตอนล็อกอินยังไม่ได้เก็บ token ลงเครื่อง (กันไม่ให้เก็บข้อมูลก่อนผู้ใช้ยืนยัน)
+        // → เพิ่งกดยืนยันตอนนี้ ค่อยเก็บ token (pendingToken) เพื่อให้ interceptor แนบให้กับ request ถัดไป
+        if (pendingToken) await AsyncStorage.setItem('token', pendingToken);
         const res = await api.post('/auth/social/complete', {
           full_name,
           phone_number,
