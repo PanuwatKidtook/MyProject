@@ -459,6 +459,7 @@ export default function ReservationListScreen() {
               <Ionicons name="chevron-forward" size={18} color="#0284C7" />
             </TouchableOpacity>
 
+            {/* ดูการชำระบิลได้เสมอ — เลขห้องจะขึ้นก็ต่อเมื่อยืนยันห้องที่เคาน์เตอร์แล้ว */}
             <TouchableOpacity
               onPress={() => {
                 const item = choiceTarget;
@@ -468,6 +469,9 @@ export default function ReservationListScreen() {
                   params: {
                     bookingId: item.bookingId,
                     roomNumber: item.roomNumber,
+                    roomRevealed: isRoomRevealed(item) ? '1' : '0',
+                    checkInDate: item.startDate || '',
+                    priceMonthly: item.priceMonthly ? String(item.priceMonthly) : '',
                   }
                 });
               }}

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -52,12 +52,24 @@ const formatDate = (dateStr) => {
 // ค่าปรับล่าช้าคิด 50 บาท/วัน (ตรงกับ calculateLateFee ฝั่ง backend) — ย้อนคำนวณจำนวนวันเพื่ออธิบายเหตุผล
 const lateDays = (lateFee) => Math.round(Number(lateFee || 0) / 50);
 
+// ก่อนถึงวันครบกำหนด: บิลยังไม่ต้องจ่าย → โชว์รายการเป็น ฿0 + "ชำระแล้ว"
+// ยอดจริงจะขึ้นให้ชำระเมื่อถึง/เลยวันครบกำหนดเท่านั้น (frontend เป็นคนตัดสินใจแสดง)
+const isBeforeDue = (dueDate) => {
+  if (!dueDate) return false;
+  const today = new Date();
+  const due = new Date(dueDate);
+  today.setHours(0, 0, 0, 0);
+  due.setHours(0, 0, 0, 0);
+  return today < due;
+};
+
 // ===================================================================
 // การ์ดรายละเอียดบิล 1 ใบแบบยาวลงมา: ค่าห้อง/น้ำ/ไฟ + เหตุผลค่าปรับ + ชำระเงิน (QR/แจ้งโอน+สลิป) + ประวัติการชำระ
 // ===================================================================
 function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
   const [qrData, setQrData] = useState(null);
   const [qrLoading, setQrLoading] = useState(false);
+  const [qrSecondsLeft, setQrSecondsLeft] = useState(0); // นับถอยหลัง QR พร้อมเพย์ (หมดอายุใน 5 นาที)
   const [payTab, setPayTab] = useState('qr'); // 'qr' | 'manual' — เลือกวิธีจ่ายแบบการ์ด 2 ช่อง เหมือนหน้า bill.js
   const [payAmount, setPayAmount] = useState('');
   const [payMethod, setPayMethod] = useState('โอนเงิน');
@@ -67,8 +79,13 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [receiptGenerating, setReceiptGenerating] = useState(false);
 
-  const remaining = (Number(detail.total_amount) || 0) + (Number(detail.late_fee) || 0);
-  const billItems = sortedBillDetails(detail.details);
+  // ก่อนถึงกำหนด (หรือยังไม่มีบิลจริง = placeholder): ยอด/รายการโชว์เป็น ฿0 และสถานะ "ชำระแล้ว"
+  const notYetDue = detail.__placeholder || isBeforeDue(detail.due_date);
+  const rawRemaining = (Number(detail.total_amount) || 0) + (Number(detail.late_fee) || 0);
+  const remaining = notYetDue ? 0 : rawRemaining;
+  const displayStatus = notYetDue ? 'ชำระแล้ว' : detail.invoice_status;
+  const rawItems = sortedBillDetails(detail.details);
+  const billItems = notYetDue ? rawItems.map((l) => ({ ...l, subtotal: 0 })) : rawItems;
 
   useEffect(() => {
     setPayAmount(remaining > 0 ? String(remaining) : '');
@@ -77,6 +94,7 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
   }, [detail.invoice_id]);
 
   const fetchPayments = async () => {
+    if (!detail.invoice_id) { setPayments([]); return; } // placeholder ยังไม่มีบิลจริง
     setLoadingPayments(true);
     try {
       const response = await api.get('/my-payments');
@@ -93,13 +111,34 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
     setQrLoading(true);
     try {
       const response = await api.get(`/invoice/${detail.invoice_id}/promptpay`);
-      if (response.data?.success) setQrData(response.data.data);
+      if (response.data?.success) {
+        setQrData(response.data.data);
+        setQrSecondsLeft(300); // QR ใช้ได้ 5 นาที
+      }
     } catch (error) {
       Alert.alert('ผิดพลาด', error.response?.data?.message || 'ขอ QR พร้อมเพย์ไม่สำเร็จ');
     } finally {
       setQrLoading(false);
     }
   };
+
+  // นับถอยหลังอายุ QR — ครบ 5 นาทีให้ QR หายไป ผู้ใช้ต้องกดขอใหม่
+  useEffect(() => {
+    if (!qrData || qrSecondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setQrSecondsLeft((s) => {
+        if (s <= 1) {
+          clearInterval(timer);
+          setQrData(null);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [qrData, qrSecondsLeft]);
+
+  const formatCountdown = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
   const pickPaySlip = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -196,32 +235,60 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
     }
   };
 
-  const canPay = detail.invoice_status !== 'ชำระแล้ว' && detail.invoice_status !== 'ยกเลิก';
+  // ก่อนถึงกำหนดยังไม่ต้องจ่าย → ซ่อนช่องชำระเงิน
+  const canPay = !notYetDue && detail.invoice_status !== 'ชำระแล้ว' && detail.invoice_status !== 'ยกเลิก';
 
   return (
     <View style={{ marginBottom: 24 }}>
-      {/* ยอดรวมที่ต้องจ่ายทั้งหมด */}
-      <View style={{ backgroundColor: '#0F7EE6', borderRadius: 24, padding: 18, marginBottom: 16 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700' }}>
-          บิลประจำเดือน {formatMonth(detail.invoice_date)} · ยอดที่ต้องชำระทั้งหมด
+      {/* ยอดรวมที่ต้องจ่ายทั้งหมด — การ์ดฟ้าไล่โทน มีเงา */}
+      <View style={{
+        backgroundColor: '#0F7EE6', borderRadius: 28, padding: 22, marginBottom: 16,
+        shadowColor: '#0F7EE6', shadowOpacity: 0.28, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 8,
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ width: 26, height: 26, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="receipt-outline" size={15} color="white" />
+          </View>
+          <Text style={{ color: 'rgba(255,255,255,0.92)', fontSize: 12.5, fontWeight: '800' }}>
+            บิลประจำเดือน {formatMonth(detail.invoice_date)}
+          </Text>
+        </View>
+
+        <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '700', marginTop: 14 }}>
+          {notYetDue ? 'ยอดที่ต้องชำระ (ยังไม่ถึงกำหนด)' : 'ยอดที่ต้องชำระทั้งหมด'}
         </Text>
-        <Text style={{ color: 'white', fontSize: 32, fontWeight: '900', marginTop: 2 }}>
+        <Text style={{ color: 'white', fontSize: 40, fontWeight: '900', marginTop: 2, letterSpacing: -0.5 }}>
           ฿{remaining.toLocaleString()}
         </Text>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 }}>
-            <Ionicons name={detail.invoice_status === 'ชำระแล้ว' ? 'checkmark-circle' : 'time'} size={13} color="white" />
-            <Text style={{ color: 'white', fontSize: 11, fontWeight: '800' }}>{detail.invoice_status}</Text>
+
+        <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.16)', marginTop: 16, marginBottom: 14 }} />
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 5,
+            backgroundColor: displayStatus === 'ชำระแล้ว' ? 'rgba(16,185,129,0.95)' : 'rgba(255,255,255,0.22)',
+            paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+          }}>
+            <Ionicons name={displayStatus === 'ชำระแล้ว' ? 'checkmark-circle' : 'time'} size={14} color="white" />
+            <Text style={{ color: 'white', fontSize: 11.5, fontWeight: '900' }}>{displayStatus}</Text>
           </View>
-          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700' }}>ครบกำหนด {formatDate(detail.due_date)}</Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '700' }}>ครบกำหนดชำระ</Text>
+            <Text style={{ color: 'white', fontSize: 12.5, fontWeight: '900', marginTop: 1 }}>{formatDate(detail.due_date)}</Text>
+          </View>
         </View>
       </View>
 
       {/* รายละเอียดเรียงลำดับ: ค่าน้ำ → ค่าไฟ → ค่าห้อง → ยอดรวม → หมายเหตุค่าปรับ (ถ้ามี) */}
-      <View style={{ backgroundColor: 'white', borderRadius: 20, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-          <Ionicons name="list-outline" size={16} color="#64748B" />
-          <Text style={{ fontSize: 13, fontWeight: '900', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+      <View style={{
+        backgroundColor: 'white', borderRadius: 24, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: '#EEF2F7',
+        shadowColor: '#0F172A', shadowOpacity: 0.04, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2,
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 14 }}>
+          <View style={{ width: 28, height: 28, borderRadius: 9, backgroundColor: '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="list-outline" size={15} color="#0F7EE6" />
+          </View>
+          <Text style={{ fontSize: 13, fontWeight: '900', color: '#334155', letterSpacing: 0.2 }}>
             รายละเอียดค่าเช่าและสาธารณูปโภค
           </Text>
         </View>
@@ -233,30 +300,64 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
               key={idx}
               style={{
                 flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                backgroundColor: st.bg, borderRadius: 14, padding: 12,
-                marginBottom: idx === billItems.length - 1 ? 0 : 8,
+                backgroundColor: st.bg, borderRadius: 16, padding: 13,
+                marginBottom: idx === billItems.length - 1 ? 0 : 9,
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-                <View style={{ width: 34, height: 34, borderRadius: 11, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name={st.icon} size={17} color={st.color} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11, flex: 1 }}>
+                <View style={{
+                  width: 40, height: 40, borderRadius: 13, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center',
+                  shadowColor: st.color, shadowOpacity: 0.18, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1,
+                }}>
+                  <Ionicons name={st.icon} size={19} color={st.color} />
                 </View>
-                <Text style={{ color: '#334155', fontSize: 13, fontWeight: '700', flex: 1 }} numberOfLines={2}>{line.item_name}</Text>
+                <Text style={{ color: '#334155', fontSize: 13.5, fontWeight: '800', flex: 1 }} numberOfLines={2}>{line.item_name}</Text>
               </View>
-              <Text style={{ color: st.color, fontSize: 14, fontWeight: '900' }}>฿{Number(line.subtotal || 0).toLocaleString()}</Text>
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                <Text style={{ color: notYetDue ? '#94A3B8' : st.color, fontSize: 15, fontWeight: '900' }}>
+                  ฿{Number(line.subtotal || 0).toLocaleString()}
+                </Text>
+                {notYetDue && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#DCFCE7', paddingHorizontal: 8, paddingVertical: 2.5, borderRadius: 999 }}>
+                    <Ionicons name="checkmark-circle" size={11} color="#16A34A" />
+                    <Text style={{ fontSize: 10, fontWeight: '900', color: '#16A34A' }}>ชำระแล้ว</Text>
+                  </View>
+                )}
+              </View>
             </View>
           );
         })}
 
-        <View style={{ height: 1, backgroundColor: '#E2E8F0', marginVertical: 14 }} />
+        <View style={{ height: 1, backgroundColor: '#EEF2F7', marginVertical: 16 }} />
 
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text style={{ fontWeight: '900', fontSize: 15, color: '#0F172A' }}>ยอดรวมทั้งหมด</Text>
-          <Text style={{ fontWeight: '900', fontSize: 20, color: '#0F7EE6' }}>฿{remaining.toLocaleString()}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {notYetDue && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#DCFCE7', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999 }}>
+                <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
+                <Text style={{ fontSize: 10.5, fontWeight: '900', color: '#16A34A' }}>ชำระแล้ว</Text>
+              </View>
+            )}
+            <Text style={{ fontWeight: '900', fontSize: 22, color: notYetDue ? '#16A34A' : '#0F7EE6' }}>฿{remaining.toLocaleString()}</Text>
+          </View>
         </View>
 
+        {/* ก่อนถึงกำหนด: อธิบายว่ายอดจะขึ้นเมื่อครบกำหนด */}
+        {notYetDue && (
+          <View style={{ backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 14, padding: 12, marginTop: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="information-circle" size={16} color="#2563EB" />
+              <Text style={{ fontSize: 12, fontWeight: '900', color: '#1D4ED8' }}>ยังไม่ถึงกำหนดชำระ</Text>
+            </View>
+            <Text style={{ fontSize: 12, color: '#2563EB', marginTop: 4, fontWeight: '600' }}>
+              ยอดค่าน้ำ ค่าไฟ และค่าเช่าห้อง จะแสดงให้ชำระเมื่อถึงวันครบกำหนด {formatDate(detail.due_date)}
+            </Text>
+          </View>
+        )}
+
         {/* หมายเหตุ: ค่าปรับชำระล่าช้า แสดงต่อจากยอดรวมทันที */}
-        {detail.late_fee > 0 && (
+        {!notYetDue && detail.late_fee > 0 && (
           <View style={{ backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', borderRadius: 14, padding: 12, marginTop: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Ionicons name="alert-circle" size={16} color="#DC2626" />
@@ -337,6 +438,13 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
                   ยอดชำระ ฿{Number(qrData.amount || 0).toLocaleString()}
                 </Text>
                 <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4, textAlign: 'center' }}>สแกนจ่ายผ่านแอปธนาคารที่รองรับพร้อมเพย์</Text>
+                {/* ตัวนับเวลา QR หมดอายุใน 5 นาที */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12, backgroundColor: '#FEF3C7', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 }}>
+                  <Ionicons name="time-outline" size={14} color="#B45309" />
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#B45309' }}>
+                    QR หมดอายุใน {formatCountdown(qrSecondsLeft)} นาที
+                  </Text>
+                </View>
               </View>
             ) : (
               <TouchableOpacity
@@ -401,7 +509,8 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
         </View>
       )}
 
-      {/* ประวัติการชำระ + ดูสลิปที่เคยส่ง */}
+      {/* ประวัติการชำระ + ดูสลิปที่เคยส่ง — ซ่อนเมื่อยังไม่มีบิลจริง (placeholder) */}
+      {!detail.__placeholder && (
       <View style={{ backgroundColor: 'white', borderRadius: 20, padding: 16, borderWidth: 1, borderColor: '#E2E8F0' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
           <Ionicons name="time-outline" size={16} color="#64748B" />
@@ -441,37 +550,69 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
           })
         )}
       </View>
+      )}
     </View>
   );
 }
 
 export default function InvoiceScreen() {
   const router = useRouter();
+  // มาจากหน้า "ดูการชำระบิล" — โชว์เลขห้องเฉพาะเมื่อยืนยันห้องที่เคาน์เตอร์แล้ว (roomRevealed === '1')
+  const { roomRevealed, bookingId, roomNumber, checkInDate, priceMonthly } = useLocalSearchParams();
+  const isRoomRevealed = roomRevealed !== '0';
 
-  const [invoices, setInvoices] = useState([]);
+  // สร้างบิล placeholder เมื่อยังไม่มีบิลจริง — โชว์ ฿0 + "ชำระแล้ว" (จ่ายล่วงหน้าไปแล้ว)
+  // ยอดจริงจะขึ้นเมื่อเจ้าหน้าที่ออกบิล/ถึงวันครบกำหนด
+  const buildPlaceholder = () => {
+    const now = new Date();
+    const invoiceDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    let dueDate = null;
+    if (checkInDate) {
+      const day = new Date(checkInDate).getDate();
+      const lastOfNext = new Date(now.getFullYear(), now.getMonth() + 2, 0).getDate();
+      dueDate = new Date(now.getFullYear(), now.getMonth() + 1, Math.min(day, lastOfNext))
+        .toISOString().split('T')[0];
+    }
+    return {
+      __placeholder: true,
+      invoice_id: null,
+      room_number: roomNumber,
+      invoice_date: invoiceDate,
+      due_date: dueDate,
+      details: [
+        { item_name: 'ค่าน้ำ', quantity: 0, subtotal: 0 },
+        { item_name: 'ค่าไฟ', quantity: 0, subtotal: 0 },
+        { item_name: 'ค่าเช่าห้อง (รายเดือน)', quantity: 0, subtotal: 0 },
+      ],
+      total_amount: 0,
+      late_fee: 0,
+      invoice_status: 'ยังไม่ชำระ',
+    };
+  };
+
+  const [detail, setDetail] = useState(null);   // รายละเอียดบิลเต็มของห้องนี้ (รายเดือน = 1 ห้อง/บัญชี)
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState('all');
   const [slipPreview, setSlipPreview] = useState(null);
 
-  // รายละเอียดบิลที่กำลังเปิดดู
-  const [selectedDetail, setSelectedDetail] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  const fetchInvoices = async () => {
+  // รายเดือน 1 ห้อง/บัญชี → ดึงบิลของห้องนี้มาโชว์การ์ดตรงๆ ไม่ต้องมีลิสต์/แท็บ
+  const loadInvoice = async () => {
     try {
-      const response = await api.get('/my-invoices');
-      if (response.data?.success && Array.isArray(response.data.data)) {
-        setInvoices(response.data.data);
-      } else {
-        setInvoices([]);
-      }
+      const res = await api.get('/my-invoices');
+      const rows = res.data?.success && Array.isArray(res.data.data) ? res.data.data : [];
+      // เลือกบิลของ booking นี้ก่อน ถ้าไม่ระบุ/ไม่เจอ ใช้บิลล่าสุด
+      const mine = bookingId ? rows.filter((r) => String(r.booking_id) === String(bookingId)) : rows;
+      const pool = mine.length ? mine : rows;
+      const target = [...pool].sort((a, b) => new Date(b.invoice_date) - new Date(a.invoice_date))[0];
+      if (!target) { setDetail(null); return; }
+      const full = await api.get(`/invoice/${target.invoice_id}`);
+      setDetail(full.data?.success ? full.data.data : null);
     } catch (error) {
       if (error.response?.status === 401) {
         Alert.alert('กรุณาเข้าสู่ระบบ', 'Session หมดอายุ กรุณาเข้าสู่ระบบใหม่');
         router.replace('/(auth)/login');
       } else {
-        Alert.alert('ผิดพลาด', 'ไม่สามารถดึงรายการบิลได้ กรุณาลองใหม่');
+        setDetail(null);
       }
     } finally {
       setLoading(false);
@@ -481,37 +622,22 @@ export default function InvoiceScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchInvoices();
+      loadInvoice();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
   );
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchInvoices();
+    loadInvoice();
   };
 
-  const filteredInvoices = invoices.filter(item => {
-    if (activeTab === 'all') return true;
-    return item.invoice_status === activeTab;
-  });
-
-  // เปิดดูรายละเอียดบิล — ดึงข้อมูลเต็มจาก /invoice/:id
-  const openDetail = async (invoiceId) => {
-    setSelectedDetail(null);
-    setDetailLoading(true);
-    try {
-      const response = await api.get(`/invoice/${invoiceId}`);
-      if (response.data?.success) setSelectedDetail(response.data.data);
-    } catch (error) {
-      Alert.alert('ผิดพลาด', 'ไม่สามารถดึงรายละเอียดบิลได้');
-    } finally {
-      setDetailLoading(false);
-    }
-  };
+  // เลขห้องบนหัวข้อ: โชว์เมื่อยืนยันแล้วเท่านั้น (ใช้จากบิลก่อน ถ้าไม่มีใช้ param)
+  const headerRoom = detail?.room_number || roomNumber;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="light-content" backgroundColor="#0F7EE6" />
 
       <View style={{
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -521,48 +647,19 @@ export default function InvoiceScreen() {
           <Ionicons name="arrow-back" size={22} color="white" />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={{ fontSize: 17, fontWeight: '900', color: 'white' }}>บิลค่าน้ำ ค่าไฟ และค่าเช่าห้อง</Text>
-          <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontWeight: '600' }}>
-            {filteredInvoices.length} รายการ
+          <Text style={{ fontSize: 18, fontWeight: '900', color: 'white' }}>
+            ใบแจ้งหนี้{isRoomRevealed && headerRoom ? ` ห้อง ${headerRoom}` : ''}
           </Text>
+          {!(isRoomRevealed && headerRoom) && (
+            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 2, fontWeight: '600' }}>
+              รอยืนยันห้องที่เคาน์เตอร์
+            </Text>
+          )}
         </View>
         <TouchableOpacity onPress={onRefresh} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.14)', justifyContent: 'center', alignItems: 'center' }}>
           <Ionicons name="refresh" size={20} color="white" />
         </TouchableOpacity>
       </View>
-
-      {/* แท็บกรองสถานะ */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={{ backgroundColor: 'white', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, gap: 8 }}
-      >
-        {[
-          { id: 'all', title: 'ทั้งหมด', icon: 'apps-outline' },
-          { id: 'ยังไม่ชำระ', title: 'ยังไม่ชำระ', icon: 'alert-circle-outline' },
-          { id: 'ชำระบางส่วน', title: 'ชำระบางส่วน', icon: 'time-outline' },
-          { id: 'ชำระแล้ว', title: 'ชำระแล้ว', icon: 'checkmark-circle-outline' },
-        ].map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <TouchableOpacity
-              key={tab.id}
-              onPress={() => setActiveTab(tab.id)}
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 6,
-                paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999,
-                backgroundColor: isActive ? '#0F7EE6' : '#F1F5F9'
-              }}
-            >
-              <Ionicons name={tab.icon} size={14} color={isActive ? 'white' : '#94A3B8'} />
-              <Text style={{ fontSize: 13, fontWeight: 'bold', color: isActive ? 'white' : '#64748B' }}>
-                {tab.title}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
 
       {loading && !refreshing ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -575,96 +672,14 @@ export default function InvoiceScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {filteredInvoices.length === 0 ? (
-            <View style={{ alignItems: 'center', marginTop: 90, backgroundColor: 'white', borderRadius: 20, paddingVertical: 50, borderWidth: 1, borderColor: '#E2E8F0' }}>
-              <Ionicons name="receipt-outline" size={64} color="#CBD5E1" />
-              <Text style={{ fontSize: 14, color: '#94A3B8', marginTop: 12, fontWeight: '600' }}>
-                ไม่มีบิลในหมวดหมู่นี้
-              </Text>
-            </View>
-          ) : (
-            filteredInvoices.map((item) => {
-              const color = STATUS_COLOR[item.invoice_status] || STATUS_COLOR['ยังไม่ชำระ'];
-              const paid = item.invoice_status === 'ชำระแล้ว';
-              return (
-                <TouchableOpacity
-                  key={item.invoice_id}
-                  onPress={() => openDetail(item.invoice_id)}
-                  activeOpacity={0.75}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center', gap: 14,
-                    backgroundColor: 'white', borderRadius: 20, padding: 16, marginBottom: 12,
-                    borderWidth: 1, borderColor: '#E2E8F0',
-                  }}
-                >
-                  <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: paid ? '#DCFCE7' : '#EFF6FF', alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name={paid ? 'checkmark-done-outline' : 'home-outline'} size={22} color={paid ? '#16A34A' : '#0F7EE6'} />
-                  </View>
-
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ fontWeight: '900', fontSize: 15, color: '#1E293B' }}>
-                        ห้อง {item.room_number}
-                      </Text>
-                      <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: color.bg }}>
-                        <Text style={{ fontSize: 10, fontWeight: '800', color: color.text }}>{item.invoice_status}</Text>
-                      </View>
-                    </View>
-                    <Text style={{ color: '#94A3B8', fontSize: 11, marginTop: 2, fontWeight: '600' }}>
-                      {formatMonth(item.invoice_date)} · ครบกำหนด {formatDate(item.due_date)}
-                    </Text>
-
-                    <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 8 }}>
-                      <Text style={{ fontSize: 19, fontWeight: '900', color: '#0F7EE6' }}>
-                        ฿{Number(item.total_amount || 0).toLocaleString()}
-                      </Text>
-                      {item.late_fee > 0 && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          <Ionicons name="alert-circle" size={12} color="#EF4444" />
-                          <Text style={{ fontSize: 11, color: '#EF4444', fontWeight: '700' }}>
-                            +฿{Number(item.late_fee).toLocaleString()} ปรับล่าช้า
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-
-                  <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
-                </TouchableOpacity>
-              );
-            })
-          )}
+          {/* มีบิลจริง → โชว์บิลนั้น / ยังไม่มี → โชว์การ์ด ฿0 "ชำระแล้ว" (placeholder) */}
+          <InvoiceDetailCard
+            detail={detail || buildPlaceholder()}
+            onPaid={loadInvoice}
+            onSlipPreview={setSlipPreview}
+          />
         </ScrollView>
       )}
-
-      {/* หน้ารายละเอียดบิลแบบเต็มจอ + ชำระเงิน (โหมดรายการทั่วไป) */}
-      <Modal visible={selectedDetail !== null || detailLoading} animationType="slide" onRequestClose={() => setSelectedDetail(null)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-          <StatusBar barStyle="light-content" backgroundColor="#0F7EE6" />
-          <View style={{ backgroundColor: '#0F7EE6', paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <TouchableOpacity onPress={() => setSelectedDetail(null)} style={{ width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.14)' }}>
-              <Ionicons name="arrow-back" size={22} color="white" />
-            </TouchableOpacity>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: 'white', fontSize: 18, fontWeight: '900' }}>ใบแจ้งหนี้{selectedDetail ? ` ห้อง ${selectedDetail.room_number}` : ''}</Text>
-            </View>
-          </View>
-
-          {detailLoading || !selectedDetail ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <ActivityIndicator size="large" color="#0194F3" />
-            </View>
-          ) : (
-            <ScrollView contentContainerStyle={{ padding: 18, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-              <InvoiceDetailCard
-                detail={selectedDetail}
-                onPaid={() => { setSelectedDetail(null); fetchInvoices(); }}
-                onSlipPreview={setSlipPreview}
-              />
-            </ScrollView>
-          )}
-        </SafeAreaView>
-      </Modal>
 
       {/* พรีวิวสลิปแบบเต็มจอ */}
       <Modal visible={slipPreview !== null} transparent animationType="fade" onRequestClose={() => setSlipPreview(null)}>

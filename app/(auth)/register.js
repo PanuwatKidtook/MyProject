@@ -2,7 +2,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -21,6 +21,12 @@ import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
 
 const { width, height } = Dimensions.get('window');
+
+// endpoint ยืนยันอีเมลด้วย OTP หลังสมัคร (backend สร้างบัญชีแบบยังไม่ยืนยัน + ส่ง OTP ตอน /register)
+const API_BASE_URL = 'https://projeccty3-server.onrender.com/api';
+// ยืนยัน "การสมัคร" โดยเฉพาะ (ตั้งค่า email_verified_at) — คนละชุดกับ reset-password (/auth/verify-otp)
+const API_RESEND_REG_OTP = `${API_BASE_URL}/auth/resend-registration-otp`;
+const API_VERIFY_REG = `${API_BASE_URL}/auth/verify-registration`;
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -46,6 +52,36 @@ export default function RegisterScreen() {
   const [lang, setLang] = useState('TH');
   const [loading, setLoading] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
+
+  // ขั้นยืนยันอีเมลด้วย OTP หลังสมัครสำเร็จ (เฉพาะสมัครปกติ — social ไม่ต้องยืนยันเพราะอีเมลมาจาก provider แล้ว)
+  const [otpVisible, setOtpVisible] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [otpCountdown, setOtpCountdown] = useState(60);
+  const otpTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (otpTimerRef.current) clearInterval(otpTimerRef.current);
+    };
+  }, []);
+
+  const startOtpTimer = () => {
+    if (otpTimerRef.current) clearInterval(otpTimerRef.current);
+    setOtpCountdown(60);
+    otpTimerRef.current = setInterval(() => {
+      setOtpCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(otpTimerRef.current);
+          otpTimerRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
   
   // เพิ่ม State สำหรับจัดการ Modal และการตรวจสอบการเลื่อนดูเงื่อนไข
   const [termsVisible, setTermsVisible] = useState(false);
@@ -213,7 +249,12 @@ export default function RegisterScreen() {
       });
 
       if (response.status === 200 || response.status === 201) {
-        setSuccessVisible(true);
+        // backend สร้างบัญชีแบบยังไม่ยืนยัน + ส่ง OTP ไปอีเมลแล้ว
+        // → เปิดหน้ายืนยัน OTP ก่อน ยังไม่ถือว่าสมัครเสร็จจนกว่าจะยืนยันอีเมลสำเร็จ
+        setOtp('');
+        setOtpError('');
+        setOtpVisible(true);
+        startOtpTimer();
       }
     } catch (error) {
       if (!error.response) {
@@ -250,6 +291,67 @@ export default function RegisterScreen() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    setOtpError('');
+    if (otp.trim().length < 6) {
+      setOtpError(lang === 'TH' ? 'กรุณากรอกรหัส OTP 6 หลัก' : 'Please enter the 6-digit OTP');
+      return;
+    }
+    if (otpCountdown === 0) {
+      setOtpError(lang === 'TH' ? 'รหัส OTP หมดเวลาแล้ว กรุณาขอรหัสใหม่' : 'OTP expired. Please request a new one.');
+      return;
+    }
+
+    setVerifyingOtp(true);
+    try {
+      const res = await axios.post(API_VERIFY_REG, {
+        email: email.trim(),
+        otp: otp.trim(),
+      });
+
+      if (!res.data?.success) {
+        setOtpError(res.data?.message || (lang === 'TH' ? 'รหัส OTP ไม่ถูกต้อง' : 'Invalid OTP'));
+        return;
+      }
+
+      if (otpTimerRef.current) clearInterval(otpTimerRef.current);
+      otpTimerRef.current = null;
+      setOtpVisible(false);
+      setSuccessVisible(true);
+    } catch (error) {
+      setOtpError(
+        error.response?.data?.message ||
+        (lang === 'TH' ? 'ไม่สามารถยืนยันรหัส OTP ได้' : 'Could not verify the OTP.')
+      );
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0 || resending) return;
+    setOtpError('');
+    setResending(true);
+    try {
+      const res = await axios.post(API_RESEND_REG_OTP, {
+        email: email.trim(),
+      });
+      if (!res.data?.success) {
+        setOtpError(res.data?.message || (lang === 'TH' ? 'ส่งรหัส OTP ใหม่ไม่สำเร็จ' : 'Failed to resend OTP.'));
+        return;
+      }
+      setOtp('');
+      startOtpTimer();
+    } catch (error) {
+      setOtpError(
+        error.response?.data?.message ||
+        (lang === 'TH' ? 'ส่งรหัส OTP ใหม่ไม่สำเร็จ' : 'Failed to resend OTP.')
+      );
+    } finally {
+      setResending(false);
     }
   };
 
@@ -600,6 +702,105 @@ export default function RegisterScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal ยืนยันอีเมลด้วย OTP หลังสมัคร */}
+      <Modal
+        visible={otpVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!verifyingOtp) setOtpVisible(false); }}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 25
+        }}>
+          <View style={{ width: '100%', backgroundColor: 'white', borderRadius: 22, padding: 24 }}>
+            <View style={{ alignItems: 'center', marginBottom: 18 }}>
+              <View style={{
+                width: 60, height: 60, borderRadius: 20, backgroundColor: '#F0F8FF',
+                justifyContent: 'center', alignItems: 'center', marginBottom: 12
+              }}>
+                <Feather name="mail" size={28} color="#0194F3" />
+              </View>
+              <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222' }}>
+                {lang === 'TH' ? 'ยืนยันอีเมลของคุณ' : 'Verify your email'}
+              </Text>
+              <Text style={{ fontSize: 14, color: '#777', marginTop: 6, textAlign: 'center' }}>
+                {lang === 'TH'
+                  ? `เราได้ส่งรหัส OTP 6 หลักไปที่\n${email}`
+                  : `We sent a 6-digit OTP to\n${email}`}
+              </Text>
+            </View>
+
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA',
+              borderRadius: 16, paddingHorizontal: 15, height: 58, borderWidth: 1,
+              borderColor: otpError ? '#FF3B30' : '#E1E9F0', marginBottom: 10
+            }}>
+              <Feather name="lock" size={20} color={otpError ? '#FF3B30' : '#0194F3'} style={{ marginRight: 12 }} />
+              <TextInput
+                style={{ flex: 1, fontSize: 18, letterSpacing: 6, color: '#333' }}
+                placeholder={lang === 'TH' ? 'รหัส OTP 6 หลัก' : '6-digit OTP'}
+                placeholderTextColor="#B0BCC7"
+                keyboardType="number-pad"
+                maxLength={6}
+                value={otp}
+                onChangeText={(text) => {
+                  setOtp(text.replace(/[^0-9]/g, '').slice(0, 6));
+                  if (otpError) setOtpError('');
+                }}
+                autoFocus
+              />
+            </View>
+
+            {otpError ? (
+              <Text style={{ color: '#FF3B30', fontSize: 13, marginBottom: 10, marginLeft: 4 }}>
+                {otpError}
+              </Text>
+            ) : null}
+
+            <Text style={{ fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 16 }}>
+              {otpCountdown > 0
+                ? (lang === 'TH' ? `รหัสจะหมดเวลาใน ${otpCountdown} วินาที` : `Code expires in ${otpCountdown}s`)
+                : (lang === 'TH' ? 'รหัสหมดเวลาแล้ว' : 'Code expired')}
+            </Text>
+
+            <TouchableOpacity
+              onPress={handleVerifyOtp}
+              disabled={verifyingOtp}
+              style={{
+                backgroundColor: '#0194F3', paddingVertical: 15, borderRadius: 16,
+                alignItems: 'center', marginBottom: 12, opacity: verifyingOtp ? 0.7 : 1
+              }}
+            >
+              {verifyingOtp ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16 }}>
+                  {lang === 'TH' ? 'ยืนยัน OTP' : 'Verify OTP'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleResendOtp}
+              disabled={otpCountdown > 0 || resending}
+              style={{ alignItems: 'center', paddingVertical: 6, opacity: (otpCountdown > 0 || resending) ? 0.5 : 1 }}
+            >
+              <Text style={{ color: '#0178C7', fontWeight: 'bold', fontSize: 14 }}>
+                {resending
+                  ? (lang === 'TH' ? 'กำลังส่ง...' : 'Sending...')
+                  : otpCountdown > 0
+                    ? (lang === 'TH' ? `ส่งรหัสใหม่ได้ใน ${otpCountdown} วินาที` : `Resend in ${otpCountdown}s`)
+                    : (lang === 'TH' ? 'ส่งรหัส OTP ใหม่' : 'Resend OTP')}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

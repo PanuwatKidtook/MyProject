@@ -45,6 +45,37 @@ export default function LoginScreen() {
   // ref สำหรับกด Enter แล้วเลื่อนจากช่องชื่อผู้ใช้ไปช่องรหัสผ่าน
   const passwordRef = useRef(null);
 
+  // ยืนยันอีเมลด้วย OTP กรณีบัญชียังไม่ยืนยัน (login ตอบ 403 needVerification)
+  const [verifyVisible, setVerifyVisible] = useState(false);
+  const [verifyStep, setVerifyStep] = useState('email'); // 'email' | 'otp'
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [verifyOtp, setVerifyOtp] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyCountdown, setVerifyCountdown] = useState(0);
+  const verifyTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (verifyTimerRef.current) clearInterval(verifyTimerRef.current);
+    };
+  }, []);
+
+  const startVerifyTimer = () => {
+    if (verifyTimerRef.current) clearInterval(verifyTimerRef.current);
+    setVerifyCountdown(60);
+    verifyTimerRef.current = setInterval(() => {
+      setVerifyCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(verifyTimerRef.current);
+          verifyTimerRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
   const text = {
     TH: {
       welcome: 'ยินดีต้อนรับ', email: 'ชื่อผู้ใช้งาน (Username)', pass: 'รหัสผ่าน', forgot: 'ลืมรหัสผ่าน?',
@@ -154,6 +185,14 @@ export default function LoginScreen() {
             : 'Cannot connect to the server.',
           type: 'danger', icon: 'danger', floating: true,
         });
+      } else if (err.response.status === 403 && err.response.data?.needVerification) {
+        // บัญชียังไม่ยืนยันอีเมล → เปิดหน้ายืนยัน OTP (กรอกอีเมล → รับ OTP → ยืนยัน → ล็อกอินซ้ำอัตโนมัติ)
+        setVerifyError('');
+        setVerifyOtp('');
+        // ถ้าผู้ใช้กรอกอีเมลในช่องชื่อผู้ใช้อยู่แล้ว เติมให้เลย
+        setVerifyEmail(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username.trim()) ? username.trim() : '');
+        setVerifyStep('email');
+        setVerifyVisible(true);
       } else {
         showMessage({
           message: lang === 'TH' ? 'เข้าสู่ระบบล้มเหลว' : 'Login Failed',
@@ -163,6 +202,71 @@ export default function LoginScreen() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ส่ง OTP ไปยังอีเมลเพื่อยืนยันบัญชี
+  const handleVerifySendOtp = async () => {
+    const emailTrimmed = verifyEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      setVerifyError(lang === 'TH' ? 'กรุณากรอกอีเมลให้ถูกต้อง' : 'Please enter a valid email');
+      return;
+    }
+    setVerifyError('');
+    setVerifyLoading(true);
+    try {
+      // endpoint ยืนยัน "การสมัคร" (ตั้งค่า email_verified_at) — ไม่ใช่ชุด reset-password
+      const res = await api.post('/auth/resend-registration-otp', { email: emailTrimmed });
+      if (!res.data?.success) {
+        setVerifyError(res.data?.message || (lang === 'TH' ? 'ส่งรหัส OTP ไม่สำเร็จ' : 'Failed to send OTP.'));
+        return;
+      }
+      setVerifyStep('otp');
+      startVerifyTimer();
+    } catch (err) {
+      setVerifyError(
+        err.response?.data?.message ||
+        (lang === 'TH' ? 'ไม่พบข้อมูลผู้ใช้ หรือส่งรหัส OTP ไม่สำเร็จ' : 'User not found or failed to send OTP.')
+      );
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
+
+  // ยืนยัน OTP → สำเร็จแล้วปิดหน้าต่างและล็อกอินซ้ำอัตโนมัติ
+  const handleVerifyConfirmOtp = async () => {
+    if (verifyOtp.trim().length < 6) {
+      setVerifyError(lang === 'TH' ? 'กรุณากรอกรหัส OTP 6 หลัก' : 'Please enter the 6-digit OTP');
+      return;
+    }
+    if (verifyCountdown === 0) {
+      setVerifyError(lang === 'TH' ? 'รหัส OTP หมดเวลาแล้ว กรุณาขอรหัสใหม่' : 'OTP expired. Please request a new one.');
+      return;
+    }
+    setVerifyError('');
+    setVerifyLoading(true);
+    try {
+      // ยืนยันการสมัคร → backend ตั้ง email_verified_at ให้ (ต้องใช้ endpoint นี้ ไม่ใช่ /auth/verify-otp)
+      const res = await api.post('/auth/verify-registration', {
+        email: verifyEmail.trim(),
+        otp: verifyOtp.trim(),
+      });
+      if (!res.data?.success) {
+        setVerifyError(res.data?.message || (lang === 'TH' ? 'รหัส OTP ไม่ถูกต้อง' : 'Invalid OTP'));
+        return;
+      }
+      if (verifyTimerRef.current) clearInterval(verifyTimerRef.current);
+      verifyTimerRef.current = null;
+      setVerifyVisible(false);
+      // ยืนยันอีเมลแล้ว → ล็อกอินซ้ำด้วย username/password ที่กรอกไว้
+      handleLogin();
+    } catch (err) {
+      setVerifyError(
+        err.response?.data?.message ||
+        (lang === 'TH' ? 'ไม่สามารถยืนยันรหัส OTP ได้' : 'Could not verify the OTP.')
+      );
+    } finally {
+      setVerifyLoading(false);
     }
   };
 
@@ -663,6 +767,129 @@ export default function LoginScreen() {
                 </View>
               </>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* หน้าต่างยืนยันอีเมลด้วย OTP (บัญชียังไม่ยืนยัน) */}
+      <Modal
+        visible={verifyVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!verifyLoading) setVerifyVisible(false); }}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 25 }}>
+          <View style={{ width: '100%', backgroundColor: 'white', borderRadius: 22, padding: 24 }}>
+            <View style={{ alignItems: 'center', marginBottom: 18 }}>
+              <View style={{
+                width: 60, height: 60, borderRadius: 20, backgroundColor: '#F0F8FF',
+                justifyContent: 'center', alignItems: 'center', marginBottom: 12
+              }}>
+                <Feather name={verifyStep === 'email' ? 'mail' : 'lock'} size={28} color="#0194F3" />
+              </View>
+              <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#222' }}>
+                {lang === 'TH' ? 'ยืนยันอีเมลก่อนเข้าสู่ระบบ' : 'Verify your email to continue'}
+              </Text>
+              <Text style={{ fontSize: 14, color: '#777', marginTop: 6, textAlign: 'center' }}>
+                {verifyStep === 'email'
+                  ? (lang === 'TH'
+                      ? 'บัญชีนี้ยังไม่ได้ยืนยันอีเมล กรอกอีเมลเพื่อรับรหัส OTP'
+                      : 'This account is not verified. Enter your email to get an OTP.')
+                  : (lang === 'TH'
+                      ? `เราได้ส่งรหัส OTP 6 หลักไปที่\n${verifyEmail}`
+                      : `We sent a 6-digit OTP to\n${verifyEmail}`)}
+              </Text>
+            </View>
+
+            {verifyStep === 'email' ? (
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA',
+                borderRadius: 16, paddingHorizontal: 15, height: 58, borderWidth: 1,
+                borderColor: verifyError ? '#FF3B30' : '#E1E9F0', marginBottom: 10
+              }}>
+                <Feather name="mail" size={20} color={verifyError ? '#FF3B30' : '#0194F3'} style={{ marginRight: 12 }} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 16 }}
+                  placeholder="you@example.com"
+                  placeholderTextColor="#B0BCC7"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={verifyEmail}
+                  onChangeText={(text) => { setVerifyEmail(text); if (verifyError) setVerifyError(''); }}
+                  autoFocus
+                />
+              </View>
+            ) : (
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F9FA',
+                borderRadius: 16, paddingHorizontal: 15, height: 58, borderWidth: 1,
+                borderColor: verifyError ? '#FF3B30' : '#E1E9F0', marginBottom: 10
+              }}>
+                <Feather name="lock" size={20} color={verifyError ? '#FF3B30' : '#0194F3'} style={{ marginRight: 12 }} />
+                <TextInput
+                  style={{ flex: 1, fontSize: 18, letterSpacing: 6 }}
+                  placeholder={lang === 'TH' ? 'รหัส OTP 6 หลัก' : '6-digit OTP'}
+                  placeholderTextColor="#B0BCC7"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  value={verifyOtp}
+                  onChangeText={(text) => { setVerifyOtp(text.replace(/[^0-9]/g, '').slice(0, 6)); if (verifyError) setVerifyError(''); }}
+                  autoFocus
+                />
+              </View>
+            )}
+
+            {verifyError ? (
+              <Text style={{ color: '#FF3B30', fontSize: 13, marginBottom: 10, marginLeft: 4 }}>{verifyError}</Text>
+            ) : null}
+
+            {verifyStep === 'otp' ? (
+              <Text style={{ fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 14 }}>
+                {verifyCountdown > 0
+                  ? (lang === 'TH' ? `รหัสจะหมดเวลาใน ${verifyCountdown} วินาที` : `Code expires in ${verifyCountdown}s`)
+                  : (lang === 'TH' ? 'รหัสหมดเวลาแล้ว' : 'Code expired')}
+              </Text>
+            ) : null}
+
+            <TouchableOpacity
+              onPress={verifyStep === 'email' ? handleVerifySendOtp : handleVerifyConfirmOtp}
+              disabled={verifyLoading}
+              style={{
+                backgroundColor: '#0194F3', paddingVertical: 15, borderRadius: 16,
+                alignItems: 'center', marginBottom: 12, opacity: verifyLoading ? 0.7 : 1
+              }}
+            >
+              {verifyLoading ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 16 }}>
+                  {verifyStep === 'email'
+                    ? (lang === 'TH' ? 'ส่งรหัส OTP' : 'Send OTP')
+                    : (lang === 'TH' ? 'ยืนยัน OTP' : 'Verify OTP')}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {verifyStep === 'otp' ? (
+              <TouchableOpacity
+                onPress={handleVerifySendOtp}
+                disabled={verifyCountdown > 0 || verifyLoading}
+                style={{ alignItems: 'center', paddingVertical: 4, marginBottom: 4, opacity: (verifyCountdown > 0 || verifyLoading) ? 0.5 : 1 }}
+              >
+                <Text style={{ color: '#0178C7', fontWeight: 'bold', fontSize: 14 }}>
+                  {verifyCountdown > 0
+                    ? (lang === 'TH' ? `ส่งรหัสใหม่ได้ใน ${verifyCountdown} วินาที` : `Resend in ${verifyCountdown}s`)
+                    : (lang === 'TH' ? 'ส่งรหัส OTP ใหม่' : 'Resend OTP')}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity
+              onPress={() => { if (!verifyLoading) setVerifyVisible(false); }}
+              style={{ alignItems: 'center', paddingVertical: 6 }}
+            >
+              <Text style={{ color: '#999', fontSize: 14 }}>{t.cancel}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
