@@ -565,14 +565,9 @@ export default function InvoiceScreen() {
   // ยอดจริงจะขึ้นเมื่อเจ้าหน้าที่ออกบิล/ถึงวันครบกำหนด
   const buildPlaceholder = () => {
     const now = new Date();
-    const invoiceDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    let dueDate = null;
-    if (checkInDate) {
-      const day = new Date(checkInDate).getDate();
-      const lastOfNext = new Date(now.getFullYear(), now.getMonth() + 2, 0).getDate();
-      dueDate = new Date(now.getFullYear(), now.getMonth() + 1, Math.min(day, lastOfNext))
-        .toISOString().split('T')[0];
-    }
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const invoiceDate = `${ym}-01`;   // ออกบิลวันที่ 1
+    const dueDate = `${ym}-05`;       // ครบกำหนดชำระวันที่ 5 (ตรงกับ backend)
     return {
       __placeholder: true,
       invoice_id: null,
