@@ -63,6 +63,14 @@ const isBeforeDue = (dueDate) => {
   return today < due;
 };
 
+// นโยบายใหม่: ออกบิลวันที่ 1 → ครบกำหนดชำระวันที่ 5 ของเดือนบิลเสมอ
+// แสดงผลฝั่งแอปให้ตรง policy โดยไม่แก้ข้อมูลบิลเดิมใน backend
+const dueOnFifth = (detail) => {
+  const base = detail.invoice_date || detail.due_date;
+  if (!base) return detail.due_date || null;
+  return `${String(base).slice(0, 7)}-05`; // 'YYYY-MM' + '-05'
+};
+
 // ===================================================================
 // การ์ดรายละเอียดบิล 1 ใบแบบยาวลงมา: ค่าห้อง/น้ำ/ไฟ + เหตุผลค่าปรับ + ชำระเงิน (QR/แจ้งโอน+สลิป) + ประวัติการชำระ
 // ===================================================================
@@ -79,8 +87,10 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [receiptGenerating, setReceiptGenerating] = useState(false);
 
+  // วันครบกำหนดแสดงผล = วันที่ 5 ของเดือนบิล (นโยบายใหม่)
+  const dueDate = dueOnFifth(detail);
   // ก่อนถึงกำหนด (หรือยังไม่มีบิลจริง = placeholder): ยอด/รายการโชว์เป็น ฿0 และสถานะ "ชำระแล้ว"
-  const notYetDue = detail.__placeholder || isBeforeDue(detail.due_date);
+  const notYetDue = detail.__placeholder || isBeforeDue(dueDate);
   const rawRemaining = (Number(detail.total_amount) || 0) + (Number(detail.late_fee) || 0);
   const remaining = notYetDue ? 0 : rawRemaining;
   const displayStatus = notYetDue ? 'ชำระแล้ว' : detail.invoice_status;
@@ -210,7 +220,7 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
           </head>
           <body>
             <h1>ใบเสร็จรับเงิน · ห้อง ${detail.room_number}</h1>
-            <div class="sub">บิลประจำเดือน ${formatMonth(detail.invoice_date)} · ครบกำหนด ${formatDate(detail.due_date)}</div>
+            <div class="sub">บิลประจำเดือน ${formatMonth(detail.invoice_date)} · ครบกำหนด ${formatDate(dueDate)}</div>
             <span class="badge">ชำระแล้ว</span>
             <table style="margin-top:20px;">
               ${rows}
@@ -274,7 +284,7 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '700' }}>ครบกำหนดชำระ</Text>
-            <Text style={{ color: 'white', fontSize: 12.5, fontWeight: '900', marginTop: 1 }}>{formatDate(detail.due_date)}</Text>
+            <Text style={{ color: 'white', fontSize: 12.5, fontWeight: '900', marginTop: 1 }}>{formatDate(dueDate)}</Text>
           </View>
         </View>
       </View>
@@ -351,7 +361,7 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
               <Text style={{ fontSize: 12, fontWeight: '900', color: '#1D4ED8' }}>ยังไม่ถึงกำหนดชำระ</Text>
             </View>
             <Text style={{ fontSize: 12, color: '#2563EB', marginTop: 4, fontWeight: '600' }}>
-              ยอดค่าน้ำ ค่าไฟ และค่าเช่าห้อง จะแสดงให้ชำระเมื่อถึงวันครบกำหนด {formatDate(detail.due_date)}
+              ยอดค่าน้ำ ค่าไฟ และค่าเช่าห้อง จะแสดงให้ชำระเมื่อถึงวันครบกำหนด {formatDate(dueDate)}
             </Text>
           </View>
         )}
