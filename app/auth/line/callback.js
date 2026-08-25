@@ -46,13 +46,11 @@ export default function LineCallback() {
         // prefill ชื่อจริงจาก LINE (ถ้ามี) แต่ไม่เอา line_xxx มาใส่ · username ให้ผู้ใช้ตั้งเอง
         const realName = full_name && !full_name.startsWith('line_') ? full_name : '';
         router.replace({
-          pathname: '/register',
+          pathname: '/socialsetup',
           params: {
-            source: 'line',
             pendingToken: token,
             lockedFullName: realName,
             lockedEmail: email,
-            lockedUsername: '',
           },
         });
         return;

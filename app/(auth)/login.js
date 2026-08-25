@@ -356,13 +356,11 @@ export default function LoginScreen() {
         // prefill ชื่อจริงจาก Google (ถ้ามี) แต่ไม่เอา google_xxx มาใส่ · username ให้ผู้ใช้ตั้งเอง
         const gName = gProfile.full_name && !gProfile.full_name.startsWith('google_') ? gProfile.full_name : '';
         router.push({
-          pathname: '/register',
+          pathname: '/socialsetup',
           params: {
-            source: 'google',
             pendingToken: token,
             lockedFullName: gName,
             lockedEmail: gProfile.email || '',
-            lockedUsername: '',
           },
         });
         return;

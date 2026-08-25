@@ -36,10 +36,24 @@ export default function ProfileEditScreen() {
     email: '',
   });
 
+  // บัญชี social ที่เชื่อมไว้ (provider ที่เชื่อมแล้ว เช่น ['google'])
+  const [linkedProviders, setLinkedProviders] = useState([]);
+
 
   useEffect(() => {
     loadProfile();
+    loadSocialAccounts();
   }, []);
+
+  const loadSocialAccounts = async () => {
+    try {
+      const res = await api.get('/my-social-accounts');
+      const providers = (res.data?.data || []).map((a) => a.provider);
+      setLinkedProviders(providers);
+    } catch (e) {
+      // ถ้าโหลดไม่ได้ ปล่อยว่างไว้ (แสดงเป็นยังไม่เชื่อม)
+    }
+  };
 
 
   const loadProfile = async () => {
@@ -78,6 +92,14 @@ export default function ProfileEditScreen() {
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handleLink = (provider) => {
+    // การเชื่อมบัญชีเพิ่มต้องผ่าน OAuth flow เต็ม (โฟกัสหลักคือแสดงสถานะที่เชื่อมแล้ว)
+    Alert.alert(
+      'เชื่อมบัญชี',
+      `ขณะนี้ยังเชื่อมบัญชี ${provider === 'google' ? 'Google' : 'LINE'} เพิ่มจากในแอปไม่ได้ กรุณาเข้าสู่ระบบด้วยบัญชีนั้นโดยตรง`
+    );
   };
 
 
@@ -169,11 +191,10 @@ export default function ProfileEditScreen() {
             <Text style={styles.label}>ชื่อ-นามสกุล</Text>
             <TextInput
               value={form.name}
-              editable={false}
-              selectTextOnFocus={false}
+              onChangeText={(text) => handleChange('name', text)}
               placeholder="กรอกชื่อ-นามสกุล"
               placeholderTextColor="#94A3B8"
-              style={[styles.input, styles.readOnlyInput]}
+              style={styles.input}
             />
 
 
@@ -199,6 +220,53 @@ export default function ProfileEditScreen() {
             />
           </View>
 
+
+          <View style={[styles.card, { marginTop: 16 }]}>
+            <Text style={styles.sectionTitle}>บัญชีที่เชื่อม</Text>
+
+            {/* Google */}
+            <View style={styles.linkRow}>
+              <View style={[styles.providerIcon, { backgroundColor: '#EA4335' }]}>
+                <Ionicons name="logo-google" size={20} color="white" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.providerName}>Google</Text>
+                {linkedProviders.includes('google') && !!form.email && (
+                  <Text style={styles.providerSub} numberOfLines={1}>{form.email}</Text>
+                )}
+              </View>
+              {linkedProviders.includes('google') ? (
+                <View style={styles.linkedBadge}>
+                  <Ionicons name="checkmark" size={14} color="#16A34A" />
+                  <Text style={styles.linkedBadgeText}>เชื่อมแล้ว</Text>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.linkButton} onPress={() => handleLink('google')}>
+                  <Text style={styles.linkButtonText}>เชื่อม</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* LINE */}
+            <View style={[styles.linkRow, { marginBottom: 0 }]}>
+              <View style={[styles.providerIcon, { backgroundColor: '#06C755' }]}>
+                <Ionicons name="chatbubble" size={18} color="white" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.providerName}>LINE</Text>
+              </View>
+              {linkedProviders.includes('line') ? (
+                <View style={styles.linkedBadge}>
+                  <Ionicons name="checkmark" size={14} color="#16A34A" />
+                  <Text style={styles.linkedBadgeText}>เชื่อมแล้ว</Text>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.linkButton} onPress={() => handleLink('line')}>
+                  <Text style={styles.linkButtonText}>เชื่อม</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
 
           <TouchableOpacity
             onPress={handleSave}
@@ -343,6 +411,54 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 100,
     textAlignVertical: 'top',
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  providerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  providerName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  providerSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  linkedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  linkedBadgeText: {
+    color: '#16A34A',
+    fontSize: 13,
+    fontWeight: '800',
+    marginLeft: 4,
+  },
+  linkButton: {
+    borderWidth: 1.5,
+    borderColor: '#0194F3',
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  linkButtonText: {
+    color: '#0194F3',
+    fontSize: 13,
+    fontWeight: '800',
   },
   saveButton: {
     marginTop: 18,
