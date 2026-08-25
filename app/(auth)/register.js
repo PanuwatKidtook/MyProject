@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   KeyboardAvoidingView,
   Modal,
@@ -44,8 +45,10 @@ export default function RegisterScreen() {
   const isEmailLocked = !isSocialFlow && !!lockedUsername;
 
   // ธงล็อกรายช่อง
-  const lockFullName = isSocialFlow && !!lockedFullName;
-  const lockUsername = (isEmailLocked || isSocialFlow) && !!lockedUsername;
+  //  - social: ชื่อ-นามสกุล prefill จาก provider แต่ "แก้ได้" · username ต้องตั้งเอง (4–20 ตัว) ไม่ล็อก
+  //  - email flow: ล็อก username ที่ generate จากอีเมล
+  const lockFullName = false;
+  const lockUsername = isEmailLocked && !!lockedUsername;
   const lockEmail = (isEmailLocked || isSocialFlow) && !!lockedEmail;
   const lockPassword = isEmailLocked; // social ให้ตั้งรหัสผ่านเอง
 
@@ -209,16 +212,37 @@ export default function RegisterScreen() {
     setLoading(true);
     try {
       if (isSocialFlow) {
-        // ผู้ใช้ใหม่จาก LINE/Google มี member อยู่แล้ว (สร้างตอน exchange) → เติมโปรไฟล์ ไม่ใช่สมัครซ้ำ
-        // ตอนล็อกอินยังไม่ได้เก็บ token ลงเครื่อง (กันไม่ให้เก็บข้อมูลก่อนผู้ใช้ยืนยัน)
-        // → เพิ่งกดยืนยันตอนนี้ ค่อยเก็บ token (pendingToken) เพื่อให้ interceptor แนบให้กับ request ถัดไป
-        if (pendingToken) await AsyncStorage.setItem('token', pendingToken);
-        const res = await api.post('/auth/social/complete', {
-          full_name,
-          phone_number,
-          password,
-          user_role,
-        });
+        // ตรวจรูปแบบให้ตรงกับ backend ก่อนส่ง (username 4–20 [a-zA-Z0-9._], เบอร์ไทย 0+9-10 หลัก)
+        if (!/^[a-zA-Z0-9._]{4,20}$/.test(username.trim())) {
+          setErrors(prev => ({ ...prev, username: true }));
+          Alert.alert(
+            lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
+            lang === 'TH'
+              ? 'ชื่อผู้ใช้ต้องยาว 4–20 ตัว ใช้ตัวอักษรอังกฤษ ตัวเลข จุด หรือขีดล่างเท่านั้น'
+              : 'Username must be 4–20 chars (letters, numbers, . or _).'
+          );
+          setLoading(false);
+          return;
+        }
+        if (!/^0\d{8,9}$/.test(phone_number.replace(/[\s-]/g, ''))) {
+          setErrors(prev => ({ ...prev, phone_number: true }));
+          Alert.alert(
+            lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
+            lang === 'TH' ? 'กรุณากรอกเบอร์โทรให้ถูกต้อง (เช่น 08x-xxx-xxxx)' : 'Please enter a valid phone number.'
+          );
+          setLoading(false);
+          return;
+        }
+
+        // ผู้ใช้ social ใหม่ยัง "ไม่ถูกสร้าง" ใน DB (deferCreate) — server ออก pendingToken มาให้
+        // เพิ่งกดยืนยันตอนนี้ → ส่ง pendingToken เฉพาะ request นี้ (ไม่เก็บลงเครื่อง)
+        // server จะสร้าง member จริงแล้วคืน token จริงกลับมา ค่อยเก็บอันนั้น
+        // ถ้าผู้ใช้กดย้อนกลับก่อนยืนยัน → ไม่มี member/ไม่มี token ค้างในเครื่องเลย
+        const res = await api.post(
+          '/auth/social/complete',
+          { username: username.trim(), full_name, phone_number, password, user_role },
+          pendingToken ? { headers: { Authorization: `Bearer ${pendingToken}` } } : undefined
+        );
 
         const { token, payload } = res.data;
         if (token) await AsyncStorage.setItem('token', token);
@@ -258,36 +282,30 @@ export default function RegisterScreen() {
       }
     } catch (error) {
       if (!error.response) {
-        const noServerMsg = lang === 'TH' 
-          ? 'สมัครล้มเหลว ไม่สามารถเชื่อมต่อเซิฟเวอร์ได้ในขณะนี้' 
-          : 'Registration failed. Cannot connect to the server.';
-        
-        showMessage({
-          message: lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
-          description: noServerMsg,
-          type: "danger",
-          icon: "danger",
-          floating: true,
-        });
+        const noServerMsg = lang === 'TH'
+          ? 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ เซิร์ฟเวอร์อาจกำลังเริ่มทำงาน (ใช้เวลาสักครู่) กรุณาลองใหม่อีกครั้ง'
+          : 'Cannot connect to the server. It may be waking up — please wait a moment and try again.';
+
+        Alert.alert(lang === 'TH' ? 'ข้อผิดพลาด' : 'Error', noServerMsg);
       } else {
         const serverMessage = error.response.data?.message;
         let displayErrorMsg = t.fail;
+        // ตรวจเคส "บัญชีซ้ำ" ให้ครอบคลุมข้อความจาก backend (already/exist/ซ้ำ/ถูกใช้แล้ว)
+        const isDuplicate = serverMessage && (
+          serverMessage.includes('already') || serverMessage.includes('exist') ||
+          serverMessage.includes('ซ้ำ') || serverMessage.includes('ถูกใช้')
+        );
 
-        if (serverMessage) {
-          if (serverMessage.includes('already') || serverMessage.includes('ซ้ำ') || serverMessage.includes('exist')) {
-            displayErrorMsg = lang === 'TH' ? 'ชื่อผู้ใช้หรือบัญชีอีเมลนี้ซ้ำในระบบ' : 'This account or email already exists.';
-          } else {
-            displayErrorMsg = serverMessage;
-          }
+        if (isDuplicate) {
+          displayErrorMsg = lang === 'TH'
+            ? 'อีเมลหรือชื่อผู้ใช้นี้ถูกสมัครไปแล้ว หากเป็นบัญชีของคุณ กรุณาไปที่หน้า "เข้าสู่ระบบ"'
+            : 'This email or username is already registered. If it is your account, please go to the Login page.';
+        } else if (serverMessage) {
+          displayErrorMsg = serverMessage;
         }
-        
-        showMessage({
-          message: lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
-          description: displayErrorMsg,
-          type: "danger",
-          icon: "danger",
-          floating: true,
-        });
+
+        // ใช้ Alert (popup กลางจอ) เพื่อให้ผู้ใช้เห็นชัดเจน ไม่พลาดเหมือนแถบ flash ที่หายไว
+        Alert.alert(lang === 'TH' ? 'ข้อผิดพลาด' : 'Error', displayErrorMsg);
       }
     } finally {
       setLoading(false);

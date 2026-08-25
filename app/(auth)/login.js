@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -16,9 +17,18 @@ import {
 } from 'react-native';
 import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
-import { startGoogleLogin, startLineLogin } from '../../lib/socialAuth';
+import { openLineAuthNative, startGoogleLogin, startLineLogin } from '../../lib/socialAuth';
 
 const { width } = Dimensions.get('window');
+
+// ถอด payload จาก JWT (id/username/role) — payload เป็น ASCII ล้วน ใช้ atob ได้
+function decodeJwt(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch {
+    return null;
+  }
+}
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -343,14 +353,16 @@ export default function LoginScreen() {
       //    ใช้โปรไฟล์ที่ backend ส่งมากับ exchange โดยตรง ไม่เรียก /current-user
       if (isNewUser) {
         const gProfile = exchangeRes.data.profile || {};
+        // prefill ชื่อจริงจาก Google (ถ้ามี) แต่ไม่เอา google_xxx มาใส่ · username ให้ผู้ใช้ตั้งเอง
+        const gName = gProfile.full_name && !gProfile.full_name.startsWith('google_') ? gProfile.full_name : '';
         router.push({
           pathname: '/register',
           params: {
             source: 'google',
             pendingToken: token,
-            lockedFullName: gProfile.full_name || payload.username || '',
+            lockedFullName: gName,
             lockedEmail: gProfile.email || '',
-            lockedUsername: payload.username || '',
+            lockedUsername: '',
           },
         });
         return;
@@ -409,49 +421,52 @@ export default function LoginScreen() {
   const handleLineLogin = async () => {
     setLoading(true);
     try {
-      // 1. เปิดหน้า LINE -> รอ redirect กลับ deep link พร้อม code
-      const { code, redirectUri } = await startLineLogin();
+      // native (APK): เปิด LINE แล้วให้ server เด้ง deep link ไปที่ route /auth/line/callback
+      //   ซึ่งจะจัดการ token + นำทางเอง (ไม่ประมวลผลที่นี่ กันทำซ้ำ + กันหน้า Unmatched Route)
+      if (Platform.OS !== 'web') {
+        await openLineAuthNative();
+        return;
+      }
 
-      // 2. แลก code เป็น JWT ที่ backend (endpoint public)
+      // web: ได้ code → แลกเองที่ backend
+      const lineRes = await startLineLogin();
       const exchangeRes = await api.post('/auth/line/exchange', {
-        code,
-        redirect_uri: redirectUri,
+        code: lineRes.code,
+        redirect_uri: lineRes.redirectUri,
       });
-      const { token, payload, isNewUser } = exchangeRes.data;
-
-      // 3. ดึงโปรไฟล์เต็ม (ชื่อ/อีเมล ที่ได้จาก LINE)
-      //    แนบ token ทาง header ชั่วคราว — ยังไม่เก็บลงเครื่อง (interceptor จะไม่ทับเพราะยังไม่มี token ใน storage)
-      const profileRes = await api.get('/current-user', {
+      const token = exchangeRes.data.token;
+      const isNewUser = exchangeRes.data.isNewUser;
+      const lineUsername = exchangeRes.data.payload?.username || '';
+      const profileHeadRes = await api.get('/current-user', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const profileData = profileRes.data.data;
+      const lineFullName = profileHeadRes.data.data?.full_name || '';
+      const lineEmail = profileHeadRes.data.data?.email || '';
 
-      // 4. ผู้ใช้ใหม่ที่เพิ่งสมัครผ่าน LINE → แวะหน้าสมัครก่อน เพื่อกรอกเบอร์โทร/รหัสผ่าน
-      //    และเลือกประเภทผู้เช่า (รายวัน/รายเดือน) เอง — ไม่ถูกล็อกเป็นรายวันอัตโนมัติ
-      //    *ยังไม่เก็บ token ลงเครื่อง* จนกว่าจะกดยืนยันที่หน้าสมัคร — ส่งไปกับ pendingToken แทน
-      //    ถ้าเขากดกลับก่อนยืนยัน จะไม่มี token/เซสชัน หรือข้อมูลใด ๆ ค้างในเครื่อง
-      //    ล็อกช่องที่ได้จาก LINE ไว้: ชื่อ-นามสกุล, อีเมล, Username
+      // ผู้ใช้ใหม่ → แวะหน้าสมัครก่อน (กรอกเบอร์/รหัสผ่าน) — ยังไม่เก็บ token ส่งไปกับ pendingToken
       if (isNewUser) {
         router.push({
           pathname: '/register',
           params: {
             source: 'line',
             pendingToken: token,
-            lockedFullName: profileData.full_name || payload.username || '',
-            lockedEmail: profileData.email || '',
-            lockedUsername: payload.username || '',
+            lockedFullName: lineFullName || lineUsername || '',
+            lockedEmail: lineEmail || '',
+            lockedUsername: lineUsername || '',
           },
         });
         return;
       }
 
-      // 5. ผู้ใช้เดิม → เก็บ token ไว้ใช้กับทุก request หลังจากนี้
+      // ผู้ใช้เดิม → เก็บ token + ดึงโปรไฟล์เต็ม → เข้าระบบ
       await AsyncStorage.setItem('token', token);
+      const payload = decodeJwt(token) || {};
+      const profileRes = await api.get('/current-user');
+      const profileData = profileRes.data.data;
 
-      // 6. ผู้ใช้เดิม (เคยเติมโปรไฟล์แล้ว) → เข้าสู่ระบบได้เลย
       const userProfile = {
         id: payload.id,
-        username: payload.username,
+        username: payload.username || lineUsername,
         name: profileData.full_name || payload.username,
         full_name: profileData.full_name,
         email: profileData.email,

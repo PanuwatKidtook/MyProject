@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Myproject",
-    "slug": "Myproject",
+    "name": "Around Loei",
+    "slug": "myproject",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -19,10 +19,14 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.panuwatkidtooksteam.myproject"
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -45,11 +49,19 @@
         {
           "photosPermission": "แอปต้องการเข้าถึงรูปภาพเพื่อแนบสลิปการโอนเงิน"
         }
-      ]
+      ],
+      "@react-native-google-signin/google-signin"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0e0dbe47-a6e4-45c5-a6e2-cf7750b17daf"
+      }
+    },
+    "owner": "panuwatkidtooks-team"
   }
 }
