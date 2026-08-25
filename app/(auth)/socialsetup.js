@@ -122,6 +122,13 @@ export default function SocialSetupScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
         {/* Header สีน้ำเงิน + โลโก้ */}
         <View style={styles.headerBg}>
+          <TouchableOpacity
+            onPress={() => router.replace('/login')}
+            style={styles.backButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="arrow-back" size={24} color="white" />
+          </TouchableOpacity>
           <View style={styles.avatarCircle}>
             <Ionicons name="person" size={34} color="white" />
           </View>
@@ -222,6 +229,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 28,
     paddingBottom: 44,
+  },
+  backButton: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
   avatarCircle: {
     width: 68,
