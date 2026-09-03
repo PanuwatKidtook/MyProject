@@ -40,7 +40,7 @@ export default function EditRegisterScreen() {
   const [maskedEmail, setMaskedEmail] = useState('');
 
   const [form, setForm] = useState({
-    username: '',
+    identifier: '', // อีเมลหรือชื่อผู้ใช้ (ใช้ขอ OTP)
     otp: '',
     newPassword: '',
     confirmPassword: '',
@@ -74,17 +74,17 @@ export default function EditRegisterScreen() {
 
   const handleSendOtp = async () => {
     setErrorMsg('');
-    if (!form.username.trim()) {
-      setErrorMsg('กรุณากรอกชื่อ user');
+    if (!form.identifier.trim()) {
+      setErrorMsg('กรุณากรอกอีเมลหรือชื่อผู้ใช้');
       return;
     }
 
     try {
       setSendingOtp(true);
 
-      // ส่งแค่ username — หลังบ้านจะดึงอีเมลที่ผูกกับบัญชีนี้มาส่ง OTP เอง
+      // ส่งอีเมลหรือชื่อผู้ใช้ — หลังบ้านจะหาบัญชีแล้วส่ง OTP ไปที่อีเมลที่ผูกไว้เอง
       const res = await axios.post(API_SEND_OTP, {
-        username: form.username.trim(),
+        identifier: form.identifier.trim(),
       });
 
       if (!res.data?.success) {
@@ -120,7 +120,7 @@ export default function EditRegisterScreen() {
       setVerifyingOtp(true);
 
       const res = await axios.post(API_VERIFY_OTP, {
-        username: form.username.trim(),
+        identifier: form.identifier.trim(),
         otp: form.otp.trim(),
       });
 
@@ -162,7 +162,7 @@ export default function EditRegisterScreen() {
       setSavingPassword(true);
 
       const res = await axios.post(API_RESET_PASSWORD, {
-        username: form.username.trim(),
+        identifier: form.identifier.trim(),
         newPassword: form.newPassword,
       });
 
@@ -228,15 +228,16 @@ export default function EditRegisterScreen() {
               <Text style={styles.sectionTitle}>กรอกข้อมูลเพื่อรับ OTP</Text>
 
               <Text style={styles.subText}>
-                กรอกชื่อผู้ใช้ของคุณ ระบบจะส่งรหัส OTP ไปที่อีเมลที่ผูกกับบัญชีนี้
+                กรอกอีเมลหรือชื่อผู้ใช้ของคุณ ระบบจะส่งรหัส OTP ไปที่อีเมลที่ผูกกับบัญชีนี้
               </Text>
 
-              <Text style={styles.label}>User Name</Text>
+              <Text style={styles.label}>อีเมล หรือ ชื่อผู้ใช้</Text>
               <TextInput
-                value={form.username}
-                onChangeText={(text) => handleChange('username', text)}
-                placeholder="กรอกชื่อ user"
+                value={form.identifier}
+                onChangeText={(text) => handleChange('identifier', text)}
+                placeholder="กรอกอีเมลหรือชื่อ user"
                 placeholderTextColor="#94A3B8"
+                keyboardType="email-address"
                 style={styles.input}
                 autoCapitalize="none"
               />
