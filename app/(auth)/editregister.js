@@ -36,9 +36,11 @@ export default function EditRegisterScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const timerRef = useRef(null);
 
+  // อีเมลปลายทางแบบปิดบังบางส่วน (หลังบ้านดึงจาก DB แล้วส่งกลับมาให้แสดง)
+  const [maskedEmail, setMaskedEmail] = useState('');
+
   const [form, setForm] = useState({
     username: '',
-    email: '',
     otp: '',
     newPassword: '',
     confirmPassword: '',
@@ -72,17 +74,17 @@ export default function EditRegisterScreen() {
 
   const handleSendOtp = async () => {
     setErrorMsg('');
-    if (!form.username.trim() || !form.email.trim()) {
-      setErrorMsg('กรุณากรอกชื่อ user และ email ให้ครบ');
+    if (!form.username.trim()) {
+      setErrorMsg('กรุณากรอกชื่อ user');
       return;
     }
 
     try {
       setSendingOtp(true);
 
+      // ส่งแค่ username — หลังบ้านจะดึงอีเมลที่ผูกกับบัญชีนี้มาส่ง OTP เอง
       const res = await axios.post(API_SEND_OTP, {
         username: form.username.trim(),
-        email: form.email.trim(),
       });
 
       if (!res.data?.success) {
@@ -90,6 +92,8 @@ export default function EditRegisterScreen() {
         return;
       }
 
+      // เก็บอีเมลปิดบังที่หลังบ้านส่งกลับมา เพื่อแสดงว่าส่งไปที่ไหน
+      setMaskedEmail(res.data?.email || '');
       startTimer();
       setStep(2);
     } catch (error) {
@@ -117,7 +121,6 @@ export default function EditRegisterScreen() {
 
       const res = await axios.post(API_VERIFY_OTP, {
         username: form.username.trim(),
-        email: form.email.trim(),
         otp: form.otp.trim(),
       });
 
@@ -160,7 +163,6 @@ export default function EditRegisterScreen() {
 
       const res = await axios.post(API_RESET_PASSWORD, {
         username: form.username.trim(),
-        email: form.email.trim(),
         newPassword: form.newPassword,
       });
 
@@ -225,6 +227,10 @@ export default function EditRegisterScreen() {
             <View style={styles.card}>
               <Text style={styles.sectionTitle}>กรอกข้อมูลเพื่อรับ OTP</Text>
 
+              <Text style={styles.subText}>
+                กรอกชื่อผู้ใช้ของคุณ ระบบจะส่งรหัส OTP ไปที่อีเมลที่ผูกกับบัญชีนี้
+              </Text>
+
               <Text style={styles.label}>User Name</Text>
               <TextInput
                 value={form.username}
@@ -233,17 +239,6 @@ export default function EditRegisterScreen() {
                 placeholderTextColor="#94A3B8"
                 style={styles.input}
                 autoCapitalize="none"
-              />
-
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                value={form.email}
-                onChangeText={(text) => handleChange('email', text)}
-                placeholder="กรอกอีเมล"
-                placeholderTextColor="#94A3B8"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                style={styles.input}
               />
 
               <TouchableOpacity
@@ -263,6 +258,9 @@ export default function EditRegisterScreen() {
           {step === 2 && (
             <View style={styles.card}>
               <Text style={styles.sectionTitle}>กรอกรหัส OTP</Text>
+              {maskedEmail ? (
+                <Text style={styles.subText}>ส่งรหัส OTP ไปที่ {maskedEmail} แล้ว</Text>
+              ) : null}
               <Text style={styles.subText}>รหัสจะหมดเวลาใน {countdown} วินาที</Text>
 
               <TextInput
