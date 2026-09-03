@@ -11,7 +11,8 @@ import {
   Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  Modal
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -25,6 +26,8 @@ export default function ProfileEditScreen() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [successVisible, setSuccessVisible] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
 
   const [form, setForm] = useState({
@@ -33,10 +36,24 @@ export default function ProfileEditScreen() {
     email: '',
   });
 
+  // บัญชี social ที่เชื่อมไว้ (provider ที่เชื่อมแล้ว เช่น ['google'])
+  const [linkedProviders, setLinkedProviders] = useState([]);
+
 
   useEffect(() => {
     loadProfile();
+    loadSocialAccounts();
   }, []);
+
+  const loadSocialAccounts = async () => {
+    try {
+      const res = await api.get('/my-social-accounts');
+      const providers = (res.data?.data || []).map((a) => a.provider);
+      setLinkedProviders(providers);
+    } catch (e) {
+      // ถ้าโหลดไม่ได้ ปล่อยว่างไว้ (แสดงเป็นยังไม่เชื่อม)
+    }
+  };
 
 
   const loadProfile = async () => {
@@ -77,10 +94,19 @@ export default function ProfileEditScreen() {
     }));
   };
 
+  const handleLink = (provider) => {
+    // การเชื่อมบัญชีเพิ่มต้องผ่าน OAuth flow เต็ม (โฟกัสหลักคือแสดงสถานะที่เชื่อมแล้ว)
+    Alert.alert(
+      'เชื่อมบัญชี',
+      `ขณะนี้ยังเชื่อมบัญชี ${provider === 'google' ? 'Google' : 'LINE'} เพิ่มจากในแอปไม่ได้ กรุณาเข้าสู่ระบบด้วยบัญชีนั้นโดยตรง`
+    );
+  };
+
 
   const handleSave = async () => {
     try {
       setSaving(true);
+      setErrorMsg('');
 
       // 1. บันทึกไปยัง backend
       await api.put('/profile', {
@@ -100,12 +126,11 @@ export default function ProfileEditScreen() {
         phone_number: form.phone,
       }));
 
-      Alert.alert('สำเร็จ', 'บันทึกข้อมูลเรียบร้อยแล้ว', [
-        { text: 'ตกลง', onPress: () => router.back() }
-      ]);
+      // ใช้ Modal กลางจอแทน Alert (Alert.alert ไม่แสดงผลบน React Native Web)
+      setSuccessVisible(true);
     } catch (error) {
       const msg = error.response?.data?.message || 'ไม่สามารถบันทึกข้อมูลได้';
-      Alert.alert('เกิดข้อผิดพลาด', msg);
+      setErrorMsg(msg);
     } finally {
       setSaving(false);
     }
@@ -152,18 +177,24 @@ export default function ProfileEditScreen() {
           </View>
 
 
+          {errorMsg ? (
+            <View style={styles.errorBox}>
+              <Ionicons name="alert-circle" size={20} color="#DC2626" style={{ marginRight: 8 }} />
+              <Text style={styles.errorText}>{errorMsg}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>ข้อมูลทั่วไป</Text>
 
 
-            <Text style={styles.label}>UserName</Text>
+            <Text style={styles.label}>ชื่อ-นามสกุล</Text>
             <TextInput
               value={form.name}
-              editable={false}
-              selectTextOnFocus={false}
+              onChangeText={(text) => handleChange('name', text)}
               placeholder="กรอกชื่อ-นามสกุล"
               placeholderTextColor="#94A3B8"
-              style={[styles.input, styles.readOnlyInput]}
+              style={styles.input}
             />
 
 
@@ -190,6 +221,53 @@ export default function ProfileEditScreen() {
           </View>
 
 
+          <View style={[styles.card, { marginTop: 16 }]}>
+            <Text style={styles.sectionTitle}>บัญชีที่เชื่อม</Text>
+
+            {/* Google */}
+            <View style={styles.linkRow}>
+              <View style={[styles.providerIcon, { backgroundColor: '#EA4335' }]}>
+                <Ionicons name="logo-google" size={20} color="white" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.providerName}>Google</Text>
+                {linkedProviders.includes('google') && !!form.email && (
+                  <Text style={styles.providerSub} numberOfLines={1}>{form.email}</Text>
+                )}
+              </View>
+              {linkedProviders.includes('google') ? (
+                <View style={styles.linkedBadge}>
+                  <Ionicons name="checkmark" size={14} color="#16A34A" />
+                  <Text style={styles.linkedBadgeText}>เชื่อมแล้ว</Text>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.linkButton} onPress={() => handleLink('google')}>
+                  <Text style={styles.linkButtonText}>เชื่อม</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* LINE */}
+            <View style={[styles.linkRow, { marginBottom: 0 }]}>
+              <View style={[styles.providerIcon, { backgroundColor: '#06C755' }]}>
+                <Ionicons name="chatbubble" size={18} color="white" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.providerName}>LINE</Text>
+              </View>
+              {linkedProviders.includes('line') ? (
+                <View style={styles.linkedBadge}>
+                  <Ionicons name="checkmark" size={14} color="#16A34A" />
+                  <Text style={styles.linkedBadgeText}>เชื่อมแล้ว</Text>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.linkButton} onPress={() => handleLink('line')}>
+                  <Text style={styles.linkButtonText}>เชื่อม</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
           <TouchableOpacity
             onPress={handleSave}
             disabled={saving}
@@ -203,6 +281,33 @@ export default function ProfileEditScreen() {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={successVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSuccessVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.successCard}>
+            <View style={styles.successIcon}>
+              <Ionicons name="checkmark-circle" size={56} color="#16A34A" />
+            </View>
+            <Text style={styles.successTitle}>อัปเดตข้อมูลแล้ว</Text>
+            <Text style={styles.successSub}>บันทึกข้อมูลโปรไฟล์เรียบร้อยแล้ว</Text>
+
+            <TouchableOpacity
+              style={styles.successButton}
+              onPress={() => {
+                setSuccessVisible(false);
+                router.back();
+              }}
+            >
+              <Text style={styles.successButtonText}>ตกลง</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -307,6 +412,54 @@ const styles = StyleSheet.create({
     minHeight: 100,
     textAlignVertical: 'top',
   },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  providerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  providerName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1E293B',
+  },
+  providerSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  linkedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  linkedBadgeText: {
+    color: '#16A34A',
+    fontSize: 13,
+    fontWeight: '800',
+    marginLeft: 4,
+  },
+  linkButton: {
+    borderWidth: 1.5,
+    borderColor: '#0194F3',
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  linkButtonText: {
+    color: '#0194F3',
+    fontSize: 13,
+    fontWeight: '800',
+  },
   saveButton: {
     marginTop: 18,
     backgroundColor: '#0194F3',
@@ -319,4 +472,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
   },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  errorText: { flex: 1, color: '#DC2626', fontSize: 13, fontWeight: '700' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+  },
+  successCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 26,
+    alignItems: 'center',
+  },
+  successIcon: { marginBottom: 10 },
+  successTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 6 },
+  successSub: { fontSize: 14, color: '#64748B', textAlign: 'center', marginBottom: 22 },
+  successButton: {
+    backgroundColor: '#0194F3',
+    paddingVertical: 13,
+    paddingHorizontal: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+  },
+  successButtonText: { color: 'white', fontSize: 16, fontWeight: '900' },
 });

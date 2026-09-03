@@ -31,6 +31,9 @@ export default function EditRegisterScreen() {
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
   const [countdown, setCountdown] = useState(60);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const timerRef = useRef(null);
 
   const [form, setForm] = useState({
@@ -48,6 +51,7 @@ export default function EditRegisterScreen() {
   }, []);
 
   const handleChange = (field, value) => {
+    if (errorMsg) setErrorMsg('');
     setForm(prev => ({ ...prev, [field]: value }));
   };
 
@@ -67,8 +71,9 @@ export default function EditRegisterScreen() {
   };
 
   const handleSendOtp = async () => {
+    setErrorMsg('');
     if (!form.username.trim() || !form.email.trim()) {
-      Alert.alert('แจ้งเตือน', 'กรุณากรอกชื่อ user และ email ให้ครบ');
+      setErrorMsg('กรุณากรอกชื่อ user และ email ให้ครบ');
       return;
     }
 
@@ -81,29 +86,29 @@ export default function EditRegisterScreen() {
       });
 
       if (!res.data?.success) {
-        Alert.alert('ส่งรหัส OTP ล้มเหลว', res.data?.message || 'ไม่สามารถส่ง OTP ได้');
+        setErrorMsg(res.data?.message || 'ไม่สามารถส่งรหัส OTP ได้');
         return;
       }
 
       startTimer();
       setStep(2);
-      Alert.alert('ส่งรหัส OTP แล้ว', res.data?.message || 'กรุณาตรวจสอบอีเมลของคุณ');
     } catch (error) {
       console.log('Send OTP error:', error);
-      Alert.alert('เกิดข้อผิดพลาด', error.response?.data?.message || 'ไม่สามารถส่งรหัส OTP ได้');
+      setErrorMsg(error.response?.data?.message || 'ไม่พบข้อมูลผู้ใช้ หรือส่งรหัส OTP ไม่สำเร็จ');
     } finally {
       setSendingOtp(false);
     }
   };
 
   const handleVerifyOtp = async () => {
+    setErrorMsg('');
     if (!form.otp.trim()) {
-      Alert.alert('แจ้งเตือน', 'กรุณากรอกรหัส OTP');
+      setErrorMsg('กรุณากรอกรหัส OTP');
       return;
     }
 
     if (countdown === 0) {
-      Alert.alert('หมดเวลา', 'รหัส OTP หมดเวลาแล้ว กรุณาขอรหัสใหม่');
+      setErrorMsg('รหัส OTP หมดเวลาแล้ว กรุณาขอรหัสใหม่');
       return;
     }
 
@@ -117,7 +122,7 @@ export default function EditRegisterScreen() {
       });
 
       if (!res.data?.success) {
-        Alert.alert('OTP ไม่ถูกต้อง', res.data?.message || 'กรุณากรอกรหัส OTP ให้ถูกต้อง');
+        setErrorMsg(res.data?.message || 'กรุณากรอกรหัส OTP ให้ถูกต้อง');
         return;
       }
 
@@ -127,25 +132,26 @@ export default function EditRegisterScreen() {
       setStep(3);
     } catch (error) {
       console.log('Verify OTP error:', error);
-      Alert.alert('เกิดข้อผิดพลาด', error.response?.data?.message || 'ไม่สามารถตรวจสอบ OTP ได้');
+      setErrorMsg(error.response?.data?.message || 'ไม่สามารถตรวจสอบ OTP ได้');
     } finally {
       setVerifyingOtp(false);
     }
   };
 
   const handleSavePassword = async () => {
+    setErrorMsg('');
     if (!form.newPassword.trim() || !form.confirmPassword.trim()) {
-      Alert.alert('แจ้งเตือน', 'กรุณากรอกรหัสผ่านให้ครบ');
+      setErrorMsg('กรุณากรอกรหัสผ่านให้ครบ');
       return;
     }
 
     if (form.newPassword.length < 6) {
-      Alert.alert('แจ้งเตือน', 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
+      setErrorMsg('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
       return;
     }
 
     if (form.newPassword !== form.confirmPassword) {
-      Alert.alert('แจ้งเตือน', 'รหัสผ่านทั้งสองช่องไม่ตรงกัน');
+      setErrorMsg('รหัสผ่านทั้งสองช่องไม่ตรงกัน');
       return;
     }
 
@@ -159,7 +165,7 @@ export default function EditRegisterScreen() {
       });
 
       if (!res.data?.success) {
-        Alert.alert('เกิดข้อผิดพลาด', res.data?.message || 'ไม่สามารถบันทึกรหัสผ่านได้');
+        setErrorMsg(res.data?.message || 'ไม่สามารถบันทึกรหัสผ่านได้');
         return;
       }
 
@@ -171,7 +177,7 @@ export default function EditRegisterScreen() {
       ]);
     } catch (error) {
       console.log('Save password error:', error);
-      Alert.alert('เกิดข้อผิดพลาด', error.response?.data?.message || 'ไม่สามารถบันทึกรหัสผ่านได้');
+      setErrorMsg(error.response?.data?.message || 'ไม่สามารถบันทึกรหัสผ่านได้');
     } finally {
       setSavingPassword(false);
     }
@@ -207,6 +213,13 @@ export default function EditRegisterScreen() {
             <View style={styles.stepLine} />
             <View style={[styles.stepDot, step >= 3 && styles.stepDotActive]} />
           </View>
+
+          {errorMsg ? (
+            <View style={styles.errorBox}>
+              <Ionicons name="alert-circle" size={20} color="#DC2626" style={{ marginRight: 8 }} />
+              <Text style={styles.errorText}>{errorMsg}</Text>
+            </View>
+          ) : null}
 
           {step === 1 && (
             <View style={styles.card}>
@@ -291,24 +304,54 @@ export default function EditRegisterScreen() {
               <Text style={styles.sectionTitle}>เปลี่ยนรหัสผ่านใหม่</Text>
 
               <Text style={styles.label}>รหัสผ่านใหม่</Text>
-              <TextInput
-                value={form.newPassword}
-                onChangeText={(text) => handleChange('newPassword', text)}
-                placeholder="กรอกรหัสผ่านใหม่"
-                placeholderTextColor="#94A3B8"
-                secureTextEntry
-                style={styles.input}
-              />
+              <View style={styles.passwordWrapper}>
+                <TextInput
+                  value={form.newPassword}
+                  onChangeText={(text) => handleChange('newPassword', text)}
+                  placeholder="กรอกรหัสผ่านใหม่"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showNewPassword}
+                  style={styles.passwordInput}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowNewPassword(prev => !prev)}
+                  style={styles.eyeButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons
+                    name={showNewPassword ? 'eye' : 'eye-off'}
+                    size={20}
+                    color="#64748B"
+                  />
+                </TouchableOpacity>
+              </View>
 
               <Text style={styles.label}>ยืนยันรหัสผ่านใหม่</Text>
-              <TextInput
-                value={form.confirmPassword}
-                onChangeText={(text) => handleChange('confirmPassword', text)}
-                placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"
-                placeholderTextColor="#94A3B8"
-                secureTextEntry
-                style={styles.input}
-              />
+              <View style={styles.passwordWrapper}>
+                <TextInput
+                  value={form.confirmPassword}
+                  onChangeText={(text) => handleChange('confirmPassword', text)}
+                  placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showConfirmPassword}
+                  style={styles.passwordInput}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowConfirmPassword(prev => !prev)}
+                  style={styles.eyeButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons
+                    name={showConfirmPassword ? 'eye' : 'eye-off'}
+                    size={20}
+                    color="#64748B"
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {form.confirmPassword.length > 0 && form.newPassword !== form.confirmPassword ? (
+                <Text style={styles.mismatchText}>กรุณาพิมพ์ตัวเลขให้ตรงกัน</Text>
+              ) : null}
 
               <TouchableOpacity
                 onPress={handleSavePassword}
@@ -353,6 +396,18 @@ const styles = StyleSheet.create({
   stepDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#CBD5E1' },
   stepDotActive: { backgroundColor: '#0194F3' },
   stepLine: { width: 35, height: 2, backgroundColor: '#CBD5E1', marginHorizontal: 8 },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  errorText: { flex: 1, color: '#DC2626', fontSize: 13, fontWeight: '700' },
   card: { backgroundColor: 'white', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0' },
   sectionTitle: { fontSize: 18, fontWeight: '900', color: '#0194F3', marginBottom: 8 },
   subText: { fontSize: 13, color: '#64748B', marginBottom: 14, fontWeight: '600' },
@@ -366,6 +421,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0F172A',
     backgroundColor: '#F8FAFC',
+  },
+  passwordWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#0F172A',
+  },
+  eyeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  mismatchText: {
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 8,
   },
   actionButton: {
     marginTop: 18,

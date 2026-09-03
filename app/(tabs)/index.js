@@ -17,7 +17,7 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
-
+import api from '../../lib/api';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -27,15 +27,16 @@ export default function HomeScreen() {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [pressedMenuItem, setPressedMenuItem] = useState(null);
 
-
   const [bookingModalVisible, setBookingModalVisible] = useState(false);
   const [currentAction, setCurrentAction] = useState('check');
 
+  // ห้องที่แอดมินยืนยันให้แล้ว (ดึงสดจาก /checkbooking ทุกครั้งที่กลับมาหน้านี้
+  // เพราะ userProfile ใน AsyncStorage ไม่มีเลขห้อง และไม่ถูกรีเฟรชหลังแอดมินยืนยัน)
+  const [confirmedRoom, setConfirmedRoom] = useState(null);
 
   const { width } = useWindowDimensions();
   const windowWidth = width;
   const isMobile = width <= 768;
-
 
   const scrollRef = useRef(null);
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -44,7 +45,6 @@ export default function HomeScreen() {
     'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?q=80&w=1200',
     'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?q=80&w=1200'
   ];
-
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -55,10 +55,8 @@ export default function HomeScreen() {
       scrollToSlide(nextSlide);
     }, 4000);
 
-
     return () => clearInterval(timer);
   }, [currentSlide, windowWidth]);
-
 
   const scrollToSlide = (index) => {
     setCurrentSlide(index);
@@ -68,18 +66,15 @@ export default function HomeScreen() {
     });
   };
 
-
   const handlePrevSlide = () => {
     const prevSlide = currentSlide === 0 ? images.length - 1 : currentSlide - 1;
     scrollToSlide(prevSlide);
   };
 
-
   const handleNextSlide = () => {
     const nextSlide = currentSlide === images.length - 1 ? 0 : currentSlide + 1;
     scrollToSlide(nextSlide);
   };
-
 
   const handleScroll = (event) => {
     const contentOffsetX = event.nativeEvent.contentOffset.x;
@@ -89,9 +84,7 @@ export default function HomeScreen() {
     }
   };
 
-
   const translateY = useRef(new Animated.Value(0)).current;
-
 
   useEffect(() => {
     Animated.loop(
@@ -110,6 +103,32 @@ export default function HomeScreen() {
     ).start();
   }, []);
 
+  const normalizeStatus = (status) => String(status || '').trim().toLowerCase();
+
+  const isCancelledStatus = (status) => {
+    const s = normalizeStatus(status);
+    return s === 'ยกเลิก' || s === 'cancelled' || s === 'canceled';
+  };
+
+  // "ยืนยันการจอง" ไม่ถือเป็นสถานะรอ — ความหมายคือระบบยืนยันห้องให้แล้ว จึงควรขึ้นการ์ดห้องที่หน้าแรกได้เลย
+  const isPendingStatus = (status) => {
+    const s = normalizeStatus(status);
+    return s === 'รอชำระมัดจำ' || s === 'รอดำเนินการ';
+  };
+
+  // หาห้องที่ "ยืนยันแล้ว" จริง ๆ (ไม่ใช่รอชำระ/ยกเลิก) จากรายการจองล่าสุดของผู้ใช้
+  const fetchConfirmedRoom = useCallback(async () => {
+    try {
+      const response = await api.post('/checkbooking', {});
+      const bookings = response.data?.success && Array.isArray(response.data.data) ? response.data.data : [];
+      const confirmed = bookings.find(
+        (item) => !isCancelledStatus(item.bookingStatus) && !isPendingStatus(item.bookingStatus)
+      );
+      setConfirmedRoom(confirmed || null);
+    } catch (e) {
+      setConfirmedRoom(null);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -118,28 +137,37 @@ export default function HomeScreen() {
           const userData = await AsyncStorage.getItem('userProfile');
           if (userData) {
             setUser(JSON.parse(userData));
+            fetchConfirmedRoom();
           } else {
             setUser(null);
+            setConfirmedRoom(null);
           }
         } catch (e) {
           console.log('Error loading user data');
         }
       };
       checkUserStatus();
-    }, [])
+    }, [fetchConfirmedRoom])
   );
-
 
   const text = {
     TH: {
-      subtitle: 'หอพักจังหวัดเลย', title: 'Around Loei', login: 'เข้าสู่ระบบ', register: 'สมัครสมาชิก',
-      status: '● ว่างพร้อมอยู่', price: '฿500-5,xxx', unit: ' วัน/เดือน', slogan: 'หอพักสบาย ใกล้ มรภ.เลย',
+      subtitle: 'หอพักจังหวัดเลย',
+      title: 'Around Loei',
+      login: 'เข้าสู่ระบบ',
+      register: 'สมัครสมาชิก',
+      status: '● ว่างพร้อมอยู่',
+      price: '฿500-5,xxx',
+      unit: ' วัน/เดือน',
+      slogan: 'หอพักสบาย ใกล้ มรภ.เลย',
       desc: 'สัมผัสการใช้ชีวิตที่เหนือระดับกับ "Around Loei" หอพักราย-รายเดือน เดินทางสะดวก ใกล้ มรภ.เลย และแหล่งของกินครบครัน',
-      bookingList: 'ประวัติการจองห้องของคุณ',
+      bookingList: 'ประวัติการจองห้องพัก',
       repair: 'แจ้งซ่อมและแจ้งปัญหา',
-      line: 'Line Official', fb: 'Facebook Fanpage', call: 'โทรสอบถามห้องว่าง',
+      line: 'Line Official',
+      fb: 'Facebook Fanpage',
+      call: 'โทรสอบถามห้องว่าง',
       amenTitle: 'สิ่งอำนวยความสะดวก',
-      bookButton: 'เช็คห้องพัก',
+      bookButton: 'จองห้องพัก',
       bookingActiveButton: 'จองห้องพัก',
       logout: 'ออกจากระบบ',
       editProfile: 'แก้ไขโปรไฟล์ผู้ใช้',
@@ -147,20 +175,30 @@ export default function HomeScreen() {
       about: 'เกี่ยวกับเรา',
       welcome: 'Welcome to Around Loei',
       bookNow: 'จองเลย',
-      modalTitleCheck: 'เช็คสถานะห้องพัก',
+      modalTitleCheck: 'จองห้องพัก',
       modalTitleBook: 'เริ่มการจองห้องพัก',
       modalSubtitleCheck: 'เลือกประเภทห้องพักที่คุณต้องการเปิดดูข้อมูลครับ',
       modalSubtitleBook: 'เลือกประเภทห้องพักที่คุณต้องการทำรายการจองครับ',
       dailyChoice: 'ห้องพักรายวัน',
-      monthlyChoice: 'ห้องพักรายเดือน'
+      monthlyChoice: 'ห้องพักรายเดือน',
+      roleDailyBadge: 'รายวัน',
+      roleMonthlyBadge: 'รายเดือน'
     },
     EN: {
-      subtitle: 'LEOI RESIDENCE', title: 'Around Loei', login: 'Login', register: 'Register',
-      status: '● Available', price: '฿500-5,xxx', unit: ' days/month', slogan: 'Cozy Living in Loei City',
+      subtitle: 'LEOI RESIDENCE',
+      title: 'Around Loei',
+      login: 'Login',
+      register: 'Register',
+      status: '● Available',
+      price: '฿500-5,xxx',
+      unit: ' days/month',
+      slogan: 'Cozy Living in Loei City',
       desc: 'Experience superior living at "Around Loei". New, clean, and convenient location near Loei Rajabhat University.',
       bookingList: 'My Bookings',
       repair: 'Maintenance Request',
-      line: 'Line Official', fb: 'Facebook Fanpage', call: 'Call for Inquiry',
+      line: 'Line Official',
+      fb: 'Facebook Fanpage',
+      call: 'Call for Inquiry',
       amenTitle: 'Premium Amenities',
       bookButton: 'Check Available Rooms',
       bookingActiveButton: 'Book a Room',
@@ -170,28 +208,35 @@ export default function HomeScreen() {
       about: 'About Us',
       welcome: 'Welcome to Around Loei',
       bookNow: 'Book Now',
-      modalTitleCheck: 'Check Room Status',
+      modalTitleCheck: 'Start Booking Room',
       modalTitleBook: 'Start Booking Room',
       modalSubtitleCheck: 'Select the room type you would like to view.',
       modalSubtitleBook: 'Select the room type you want to reserve.',
       dailyChoice: 'Daily Room',
-      monthlyChoice: 'Monthly Room'
+      monthlyChoice: 'Monthly Room',
+      roleDailyBadge: 'Daily',
+      roleMonthlyBadge: 'Monthly'
     }
   };
 
-
   const t = text[lang];
 
+  // เลขห้อง + ประเภทห้อง: ใช้ข้อมูลจากการจองที่แอดมินยืนยันแล้วก่อน (สดใหม่เสมอ)
+  // แล้วค่อย fallback ไปที่ userProfile เผื่อไม่มีการเชื่อมต่อ
+  const roomNumber = confirmedRoom?.roomNumber || user?.roomNo || null;
+  const rentType = confirmedRoom?.rentType
+    || (user?.role === 'Monthly_Tenant' ? 'monthly' : user?.role === 'Daily_Tenant' ? 'daily' : null);
+  // เปิดเผยเลขห้องเฉพาะเมื่อพนักงานเช็คอินที่เคาน์เตอร์แล้ว (สถานะ 'กำลังเข้าพัก') — ก่อนหน้านั้น "รอยืนยัน"
+  const isRoomRevealed = normalizeStatus(confirmedRoom?.bookingStatus) === 'กำลังเข้าพัก';
 
   const handleLogout = async () => {
-    // ลบทั้ง token และ userProfile
     await AsyncStorage.multiRemove(['token', 'userProfile']);
     setUser(null);
+    setConfirmedRoom(null);
     setIsMenuOpen(false);
     setIsProfileMenuOpen(false);
     setPressedMenuItem(null);
   };
-
 
   const openContact = (type, value) => {
     let url = '';
@@ -201,16 +246,25 @@ export default function HomeScreen() {
     Linking.openURL(url);
   };
 
-
   const openBookingModal = (actionType) => {
     setCurrentAction(actionType);
     setBookingModalVisible(true);
   };
 
+  // จอง (book) ของ user ที่มีโรลรายวัน/รายเดือนอยู่แล้ว — ตรวจโรลแล้วพาเข้าหน้าจองตามโรลทันที ไม่ต้องเลือกเอง
+  const handleBookNow = (actionType) => {
+    if (actionType === 'book' && user && (user.role === 'Daily_Tenant' || user.role === 'Monthly_Tenant')) {
+      router.push({
+        pathname: user.role === 'Daily_Tenant' ? '/(daily)/reservation' : '/(monthly)/reservation',
+        params: { mode: actionType }
+      });
+      return;
+    }
+    openBookingModal(actionType);
+  };
 
   const handleSelectBookingType = (roomType) => {
     setBookingModalVisible(false);
-
 
     if (roomType === 'daily') {
       router.push({
@@ -225,7 +279,6 @@ export default function HomeScreen() {
     }
   };
 
-
   const menuItemStyle = (key) => ({
     paddingVertical: 14,
     borderBottomWidth: 1,
@@ -233,11 +286,9 @@ export default function HomeScreen() {
     backgroundColor: pressedMenuItem === key ? 'rgba(255,255,255,0.16)' : 'transparent',
   });
 
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#0194F3' }}>
       <StatusBar barStyle="light-content" />
-
 
       <View style={{
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -253,14 +304,33 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-
         <View style={{ flexDirection: 'row', alignItems: 'center', position: 'relative' }}>
           {user ? (
-            <TouchableOpacity
+            <>
+              <View style={{ alignItems: 'flex-end', marginRight: 8 }}>
+                <Text numberOfLines={1} style={{ color: 'white', fontSize: 13, fontWeight: '800', maxWidth: 110 }}>
+                  {user.name || user.username}
+                </Text>
+                {(user.role === 'Daily_Tenant' || user.role === 'Monthly_Tenant') && (
+                  <View style={{ backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginTop: 2 }}>
+                    <Text style={{ color: 'white', fontSize: 10, fontWeight: '900' }}>
+                      {user.role === 'Daily_Tenant' ? t.roleDailyBadge : t.roleMonthlyBadge}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <TouchableOpacity
               onPress={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
               style={{
-                width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: '#00E676',
-                justifyContent: 'center', alignItems: 'center', backgroundColor: 'white', marginRight: 10
+                width: 42,
+                height: 42,
+                borderRadius: 21,
+                borderWidth: 2,
+                borderColor: '#00E676',
+                justifyContent: 'center',
+                alignItems: 'center',
+                backgroundColor: 'white',
+                marginRight: 10
               }}
             >
               <Image
@@ -268,15 +338,14 @@ export default function HomeScreen() {
                 style={{ width: '100%', height: '100%', borderRadius: 21 }}
               />
             </TouchableOpacity>
+            </>
           ) : null}
-
 
           <TouchableOpacity onPress={() => setIsMenuOpen(!isMenuOpen)} style={{ padding: 5 }}>
             <Ionicons name={isMenuOpen ? "close" : "menu"} size={28} color="white" />
           </TouchableOpacity>
         </View>
       </View>
-
 
       {isMenuOpen && (
         <>
@@ -295,8 +364,16 @@ export default function HomeScreen() {
             }}
           />
           <View style={{
-            backgroundColor: '#0164A6', position: 'absolute', top: 60, left: 0, right: 0, zIndex: 99,
-            paddingHorizontal: 20, paddingBottom: 15, borderBottomWidth: 2, borderBottomColor: '#014E82'
+            backgroundColor: '#0164A6',
+            position: 'absolute',
+            top: 60,
+            left: 0,
+            right: 0,
+            zIndex: 99,
+            paddingHorizontal: 20,
+            paddingBottom: 15,
+            borderBottomWidth: 2,
+            borderBottomColor: '#014E82'
           }}>
             {user ? (
               <View style={{ paddingTop: 10 }}>
@@ -309,14 +386,16 @@ export default function HomeScreen() {
                   <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>👤 {t.editProfile}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  onPress={() => { setPressedMenuItem('repair'); router.push('/repair'); setIsMenuOpen(false); setPressedMenuItem(null); }}
-                  onPressIn={() => setPressedMenuItem('repair')}
-                  onPressOut={() => setPressedMenuItem(null)}
-                  style={menuItemStyle('repair')}
-                >
-                  <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>🛠️ {t.repair}</Text>
-                </TouchableOpacity>
+                {user.role !== 'Daily_Tenant' && (
+                  <TouchableOpacity
+                    onPress={() => { setPressedMenuItem('repair'); router.push('/repair'); setIsMenuOpen(false); setPressedMenuItem(null); }}
+                    onPressIn={() => setPressedMenuItem('repair')}
+                    onPressOut={() => setPressedMenuItem(null)}
+                    style={menuItemStyle('repair')}
+                  >
+                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>🛠️ {t.repair}</Text>
+                  </TouchableOpacity>
+                )}
 
                 <TouchableOpacity
                   onPress={() => { setPressedMenuItem('about'); router.push('/about'); setIsMenuOpen(false); setPressedMenuItem(null); }}
@@ -407,7 +486,6 @@ export default function HomeScreen() {
               </View>
             )}
 
-
             <TouchableOpacity
               onPress={() => { setLang(lang === 'TH' ? 'EN' : 'TH'); setIsMenuOpen(false); setPressedMenuItem(null); }}
               style={{ marginTop: 15, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, alignItems: 'center' }}
@@ -417,7 +495,6 @@ export default function HomeScreen() {
           </View>
         </>
       )}
-
 
       <ScrollView showsVerticalScrollIndicator={false} bounces={false} style={{ backgroundColor: '#F8F9FA' }}>
         <View style={{ height: isMobile ? 320 : 420, width: '100%', position: 'relative', overflow: 'hidden' }}>
@@ -436,26 +513,21 @@ export default function HomeScreen() {
             ))}
           </ScrollView>
 
-
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', pointerEvents: 'none' }} />
-
 
           <TouchableOpacity onPress={handlePrevSlide} style={{ position: 'absolute', left: 15, top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.4)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
             <Ionicons name="chevron-back" size={24} color="white" />
           </TouchableOpacity>
 
-
           <TouchableOpacity onPress={handleNextSlide} style={{ position: 'absolute', right: 15, top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.4)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
             <Ionicons name="chevron-forward" size={24} color="white" />
           </TouchableOpacity>
-
 
           <View style={{ position: 'absolute', bottom: 55, flexDirection: 'row', width: '100%', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
             {images.map((_, index) => (
               <View key={index} style={{ width: currentSlide === index ? 18 : 7, height: 7, borderRadius: 4, backgroundColor: currentSlide === index ? '#0194F3' : 'rgba(255,255,255,0.6)', marginHorizontal: 4 }} />
             ))}
           </View>
-
 
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40, pointerEvents: 'none' }}>
             <Animated.View style={{ transform: [{ translateY }], alignItems: 'center' }}>
@@ -464,10 +536,9 @@ export default function HomeScreen() {
               </Text>
             </Animated.View>
 
-
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => openBookingModal(user ? 'book' : 'check')}
+              onPress={() => handleBookNow(user ? 'book' : 'check')}
               style={{ borderWidth: 2, borderColor: 'white', paddingHorizontal: 32, paddingVertical: 12, backgroundColor: 'rgba(255, 255, 255, 0.15)', pointerEvents: 'auto' }}
             >
               <Text style={{ color: 'white', fontWeight: '900', fontSize: 15, letterSpacing: 1.5 }}>
@@ -477,16 +548,18 @@ export default function HomeScreen() {
           </View>
         </View>
 
-
         <View style={{ marginTop: -40, backgroundColor: 'white', borderTopLeftRadius: 40, borderTopRightRadius: 40, padding: 25 }}>
-          {(!user || (user.role !== 'Daily_Tenant' && user.role !== 'Monthly_Tenant')) && (
+          {!roomNumber && (
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => openBookingModal(user ? 'book' : 'check')}
+              onPress={() => handleBookNow(user ? 'book' : 'check')}
               style={{
                 backgroundColor: '#0194F3',
-                padding: 20, borderRadius: 25, marginBottom: 20,
-                flexDirection: 'row', alignItems: 'center'
+                padding: 20,
+                borderRadius: 25,
+                marginBottom: 20,
+                flexDirection: 'row',
+                alignItems: 'center'
               }}
             >
               <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: 10, borderRadius: 15 }}>
@@ -499,10 +572,15 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
 
-
-          {user && user.role === 'Daily_Tenant' && (
-            <View style={{ backgroundColor: '#F0F9FF', borderWidth: 1, borderColor: '#BAE6FD', padding: 20, borderRadius: 25, marginBottom: 20 }}>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: '#0369A1' }}>ห้องพักรายวันของคุณ: ห้อง {user.roomNo || '204'}</Text>
+          {rentType === 'daily' && roomNumber && (
+            <View style={styles.roomCardDaily}>
+              <View style={styles.roomCardHeaderRow}>
+                <Text style={styles.roomCardEyebrowDaily}>ห้องพักรายวันของคุณ</Text>
+                <View style={styles.confirmedBadgeLight}>
+                  <Ionicons name="checkmark-circle" size={13} color="#0284C7" />
+                  <Text style={styles.confirmedBadgeLightText}>ยืนยันแล้ว</Text>
+                </View>
+              </View>
               <Text style={{ color: '#0284C7', fontSize: 12, marginBottom: 15, marginTop: 2, fontWeight: '600' }}>📅 รายการเข้าพักระยะสั้น (Daily Tenant)</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginBottom: 15 }}>
                 <View style={{ flex: 1, backgroundColor: 'white', padding: 12, borderRadius: 15, alignItems: 'center', borderWidth: 1, borderColor: '#E0F2FE' }}>
@@ -517,7 +595,7 @@ export default function HomeScreen() {
                 </View>
               </View>
               <TouchableOpacity
-                onPress={() => openBookingModal('book')}
+                onPress={() => handleBookNow('book')}
                 style={{ backgroundColor: '#0284C7', padding: 14, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}
               >
                 <FontAwesome5 name="plus-circle" size={16} color="white" />
@@ -526,55 +604,56 @@ export default function HomeScreen() {
             </View>
           )}
 
-
-          {user && user.role === 'Monthly_Tenant' && (
+          {rentType === 'monthly' && roomNumber && (
             <View style={{ marginBottom: 20 }}>
-              <View style={{ backgroundColor: '#0178C7', padding: 20, borderRadius: 25, marginBottom: 15 }}>
-                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: 'bold' }}>บัญชีลูกบ้านรายเดือน</Text>
-                <Text style={{ color: 'white', fontSize: 26, fontWeight: '900', marginTop: 2 }}>ห้อง {user.roomNo || '312'}</Text>
-              </View>
-              <Text style={{ fontSize: 16, fontWeight: '900', color: '#1E293B', marginBottom: 10, marginTop: 5 }}>บริการและฟังก์ชันลูกบ้าน</Text>
-              <View style={{ gap: 10 }}>
-                <TouchableOpacity onPress={() => router.push('/repair')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <View style={{ backgroundColor: '#EF4444', padding: 10, borderRadius: 12 }}>
-                    <FontAwesome5 name="tools" size={14} color="white" />
+              <View style={styles.roomCardMonthly}>
+                <View style={styles.roomCardMonthlyGlow} pointerEvents="none" />
+                <View style={styles.roomCardHeaderRow}>
+                  <Text style={styles.roomCardEyebrowMonthly}>บัญชีลูกบ้านรายเดือน</Text>
+                  <View style={styles.confirmedBadgeDark}>
+                    <Ionicons name={isRoomRevealed ? 'checkmark-circle' : 'time-outline'} size={13} color="#0178C7" />
+                    <Text style={styles.confirmedBadgeDarkText}>{isRoomRevealed ? 'ยืนยันแล้ว' : 'รอยืนยัน'}</Text>
                   </View>
-                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>{t.repair}</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-                </TouchableOpacity>
-
-
-                <TouchableOpacity onPress={() => router.push('/invoice')} style={{ backgroundColor: 'white', padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' }}>
-                  <View style={{ backgroundColor: '#10B981', padding: 10, borderRadius: 12 }}>
-                    <FontAwesome5 name="file-invoice-dollar" size={14} color="white" />
-                  </View>
-                  <Text style={{ flex: 1, marginLeft: 15, fontWeight: '800', color: '#334155', fontSize: 15 }}>บิลค่าน้ำ ค่ไฟ และค่าเช่าห้อง</Text>
-                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-                </TouchableOpacity>
+                </View>
+                <Text style={[styles.roomCardNumberMonthly, !isRoomRevealed && { fontSize: 20 }]}>{isRoomRevealed ? `ห้อง ${roomNumber}` : 'รอยืนยันที่เคาน์เตอร์'}</Text>
               </View>
             </View>
           )}
 
-
           {user && (
-            <TouchableOpacity onPress={() => router.push('/reservationlist')} style={{ backgroundColor: '#FFF0E6', padding: 18, borderRadius: 20, marginBottom: 25, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#FFDAB9' }}>
+            <TouchableOpacity
+              onPress={() => router.push('/reservationlist')}
+              style={{
+                backgroundColor: '#FFF0E6',
+                padding: 18,
+                borderRadius: 20,
+                marginBottom: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: '#FFDAB9'
+              }}
+            >
               <View style={{ backgroundColor: '#FF5E1F', padding: 8, borderRadius: 10 }}>
                 <Ionicons name="calendar" size={20} color="white" />
               </View>
-              <Text style={{ flex: 1, marginLeft: 15, fontWeight: 'bold', fontSize: 16, color: '#FF5E1F' }}>{t.bookingList}</Text>
+
+              <View style={{ flex: 1, marginLeft: 15 }}>
+                <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#FF5E1F' }}>
+                  {t.bookingList}
+                </Text>
+              </View>
+
               <Ionicons name="chevron-forward" size={20} color="#FF5E1F" />
             </TouchableOpacity>
           )}
-
 
           <View style={{ marginBottom: 20 }}>
             <Text style={{ fontSize: 36, fontWeight: 'bold', color: '#0194F3' }}>{t.price}<Text style={{ fontSize: 18, color: '#999', fontWeight: 'normal' }}>{t.unit}</Text></Text>
             <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#333', marginTop: 5 }}>{t.slogan}</Text>
           </View>
 
-
           <Text style={{ fontSize: 15, color: '#666', lineHeight: 24, marginBottom: 25 }}>{t.desc}</Text>
-
 
           <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A1A1A', marginBottom: 15 }}>{t.amenTitle}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -591,12 +670,9 @@ export default function HomeScreen() {
             ))}
           </View>
 
-
           <View style={{ height: 1, backgroundColor: '#EEE', marginBottom: 25 }} />
 
-
           <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A1A1A', marginBottom: 15 }}>ช่องทางการติดต่อ</Text>
-
 
           <TouchableOpacity onPress={() => openContact('line', 'aroundloei')} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#06C755', padding: 18, borderRadius: 18, marginBottom: 12 }}>
             <FontAwesome5 name="line" size={24} color="white" style={{ width: 35 }} />
@@ -604,13 +680,11 @@ export default function HomeScreen() {
             <Ionicons name="chevron-forward" size={20} color="white" />
           </TouchableOpacity>
 
-
           <TouchableOpacity onPress={() => openContact('fb', 'aroundloei')} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1877F2', padding: 18, borderRadius: 18, marginBottom: 12 }}>
             <FontAwesome5 name="facebook" size={24} color="white" style={{ width: 35 }} />
             <Text style={{ flex: 1, color: 'white', fontSize: 16, fontWeight: 'bold' }}>{t.fb}</Text>
             <Ionicons name="chevron-forward" size={20} color="white" />
           </TouchableOpacity>
-
 
           <TouchableOpacity onPress={() => openContact('tel', '0812345678')} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FF5E1F', padding: 18, borderRadius: 18, marginBottom: 12 }}>
             <Ionicons name="call" size={24} color="white" style={{ width: 35 }} />
@@ -620,7 +694,6 @@ export default function HomeScreen() {
         </View>
         <View style={{ height: 50 }} />
       </ScrollView>
-
 
       <Modal
         animationType="fade"
@@ -634,14 +707,12 @@ export default function HomeScreen() {
               <Ionicons name="close" size={20} color="#94A3B8" />
             </TouchableOpacity>
 
-
             <Text style={styles.modalTitle}>
               {currentAction === 'book' ? t.modalTitleBook : t.modalTitleCheck}
             </Text>
             <Text style={styles.modalSubtitle}>
               {currentAction === 'book' ? t.modalSubtitleBook : t.modalSubtitleCheck}
             </Text>
-
 
             <View style={styles.buttonGroup}>
               <TouchableOpacity
@@ -651,7 +722,6 @@ export default function HomeScreen() {
                 <Ionicons name={currentAction === 'book' ? "bookmark" : "search-outline"} size={22} color="#0284C7" />
                 <Text style={[styles.choiceButtonText, { color: '#0284C7' }]}>{t.dailyChoice}</Text>
               </TouchableOpacity>
-
 
               <TouchableOpacity
                 style={[styles.choiceButton, styles.monthlyButton]}
@@ -668,8 +738,96 @@ export default function HomeScreen() {
   );
 }
 
-
 const styles = StyleSheet.create({
+  roomCardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  confirmedBadgeLight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'white',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  confirmedBadgeLightText: {
+    color: '#0284C7',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  confirmedBadgeDark: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'white',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  confirmedBadgeDarkText: {
+    color: '#0178C7',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  roomCardDaily: {
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    padding: 20,
+    borderRadius: 25,
+    marginBottom: 20,
+  },
+  roomCardEyebrowDaily: {
+    color: '#0369A1',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  roomCardNumberDaily: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#0369A1',
+    marginTop: 4,
+  },
+  roomCardMonthly: {
+    backgroundColor: '#0178C7',
+    padding: 20,
+    borderRadius: 25,
+    marginBottom: 15,
+    overflow: 'hidden',
+    elevation: 6,
+    shadowColor: '#0178C7',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  roomCardMonthlyGlow: {
+    position: 'absolute',
+    top: -40,
+    right: -30,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  roomCardEyebrowMonthly: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  roomCardNumberMonthly: {
+    color: 'white',
+    fontSize: 32,
+    fontWeight: '900',
+    marginTop: 4,
+    letterSpacing: 0.3,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',

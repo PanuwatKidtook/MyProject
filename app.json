@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Myproject",
-    "slug": "Myproject",
+    "name": "Around Loei",
+    "slug": "myproject",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,16 +15,18 @@
     "android": {
       "package": "com.aroundloei.myproject",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.panuwatkidtooksteam.myproject"
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -41,7 +43,14 @@
           }
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "แอปต้องการเข้าถึงรูปภาพเพื่อแนบสลิปการโอนเงิน"
+        }
+      ],
+      "@react-native-google-signin/google-signin"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -50,7 +59,12 @@
     "extra": {
       "googleWebClientId": "257842962448-bglvn841dleo5v174su70fsj1mkdcn64.apps.googleusercontent.com",
       "googleAndroidClientId": "257842962448-69fen9uvetr1r0f20schbj0hv0unhqjf.apps.googleusercontent.com",
-      "googleIosClientId": ""
-    }
+      "googleIosClientId": "",
+      "router": {},
+      "eas": {
+        "projectId": "0e0dbe47-a6e4-45c5-a6e2-cf7750b17daf"
+      }
+    },
+    "owner": "panuwatkidtooks-team"
   }
 }
