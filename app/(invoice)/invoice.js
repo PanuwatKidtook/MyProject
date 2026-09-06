@@ -4,8 +4,9 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useState } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
-  ActivityIndicator, Alert, Image, Modal,
+  ActivityIndicator, Alert, Animated, Image, Modal, Platform,
   RefreshControl, SafeAreaView, ScrollView, StatusBar, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import api from '../../lib/api';
@@ -52,6 +53,10 @@ const formatDate = (dateStr) => {
 // ค่าปรับล่าช้าคิด 50 บาท/วัน (ตรงกับ calculateLateFee ฝั่ง backend) — ย้อนคำนวณจำนวนวันเพื่ออธิบายเหตุผล
 const lateDays = (lateFee) => Math.round(Number(lateFee || 0) / 50);
 
+// ตัดเฉพาะเลขมิเตอร์ในวงเล็บท้ายชื่อออก (ตอนแสดงบนการ์ด) เช่น "ค่าน้ำ (458-469)" → "ค่าน้ำ"
+// เก็บชื่อที่มีวันที่/ตัวเลขนอกวงเล็บไว้ เช่น "ค่าเช่าห้องล่วงหน้า 27-30 กันยายน 2569" และวงเล็บที่ไม่ใช่ตัวเลข เช่น "(รายเดือน)"
+const cleanItemName = (name) => String(name || '').replace(/\s*\(\s*\d[^)]*\)\s*$/, '').trim();
+
 // ก่อนถึงวันครบกำหนด: บิลยังไม่ต้องจ่าย → โชว์รายการเป็น ฿0 + "ชำระแล้ว"
 // ยอดจริงจะขึ้นให้ชำระเมื่อถึง/เลยวันครบกำหนดเท่านั้น (frontend เป็นคนตัดสินใจแสดง)
 const isBeforeDue = (dueDate) => {
@@ -86,6 +91,17 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
   const [payments, setPayments] = useState([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [receiptGenerating, setReceiptGenerating] = useState(false);
+
+  // จ่าย QR อัตโนมัติผ่าน Omise (ยืนยันเอง ไม่ต้องแนบสลิป)
+  const [omiseCharge, setOmiseCharge] = useState(null); // { paymentId, qrImage, amount }
+  const [omiseLoading, setOmiseLoading] = useState(false);
+  const [omisePaid, setOmisePaid] = useState(false);
+  const omisePulse = React.useRef(new Animated.Value(0)).current;
+
+  // ดูใบชำระเงิน (PDF จาก backend) แบบหน้าต่างในแอป
+  const [pdfVisible, setPdfVisible] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   // วันครบกำหนดแสดงผล = วันที่ 5 ของเดือนบิล (นโยบายใหม่)
   const dueDate = dueOnFifth(detail);
@@ -149,6 +165,56 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
   }, [qrData, qrSecondsLeft]);
 
   const formatCountdown = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+  // สร้าง charge Omise แล้วแสดง QR
+  const startOmisePay = async () => {
+    setOmiseLoading(true);
+    try {
+      const res = await api.post(`/invoice/${detail.invoice_id}/qr-charge`);
+      if (res.data?.success) {
+        setOmisePaid(false);
+        setOmiseCharge(res.data.data);
+      } else {
+        Alert.alert('ผิดพลาด', res.data?.message || 'สร้าง QR อัตโนมัติไม่สำเร็จ');
+      }
+    } catch (error) {
+      Alert.alert('ผิดพลาด', error.response?.data?.message || 'สร้าง QR อัตโนมัติไม่สำเร็จ');
+    } finally {
+      setOmiseLoading(false);
+    }
+  };
+
+  // poll สถานะ Omise ทุก 3 วิ จนจ่ายสำเร็จ → ยืนยันอัตโนมัติ
+  useEffect(() => {
+    if (!omiseCharge || omisePaid) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await api.get(`/payment/${omiseCharge.paymentId}/qr-status`);
+        if (res.data?.success && res.data.data?.paid) {
+          setOmisePaid(true);
+          clearInterval(timer);
+          fetchPayments();
+          onPaid && onPaid();
+        }
+      } catch {
+        // poll พลาดชั่วคราว → รอบถัดไปลองใหม่
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [omiseCharge, omisePaid]);
+
+  // จุดกระพริบตอนรอชำระ
+  useEffect(() => {
+    if (!omiseCharge || omisePaid) return;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(omisePulse, { toValue: 1, duration: 700, useNativeDriver: false }),
+      Animated.timing(omisePulse, { toValue: 0, duration: 700, useNativeDriver: false }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [omiseCharge, omisePaid]);
 
   const pickPaySlip = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -245,6 +311,50 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
     }
   };
 
+  // เปิดใบชำระเงิน (PDF จาก backend) แบบหน้าต่างในแอป — เว็บ: โชว์ iframe, เนทีฟ: บันทึก+แชร์ (best-effort)
+  const openInvoicePdf = async () => {
+    if (!detail.invoice_id) return;
+    setPdfUrl(null);
+    setPdfLoading(true);
+    setPdfVisible(true);
+    try {
+      const res = await api.get(`/invoice/${detail.invoice_id}/pdf`, { responseType: 'blob' });
+      if (Platform.OS === 'web') {
+        setPdfUrl(URL.createObjectURL(res.data));
+      } else {
+        try {
+          const FileSystem = require('expo-file-system');
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(res.data);
+          });
+          const uri = FileSystem.cacheDirectory + `invoice_${detail.invoice_id}.pdf`;
+          await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+          setPdfVisible(false);
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
+          }
+        } catch {
+          setPdfVisible(false);
+          Alert.alert('แจ้งเตือน', 'พรีวิวใบชำระเงินบนแอปยังไม่รองรับ กรุณาเปิดผ่านเว็บ');
+        }
+      }
+    } catch (error) {
+      setPdfVisible(false);
+      Alert.alert('ผิดพลาด', error.response?.data?.message || 'เปิดใบชำระเงินไม่สำเร็จ');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const closePdf = () => {
+    if (Platform.OS === 'web' && pdfUrl) { try { URL.revokeObjectURL(pdfUrl); } catch {} }
+    setPdfUrl(null);
+    setPdfVisible(false);
+  };
+
   // ก่อนถึงกำหนดยังไม่ต้องจ่าย → ซ่อนช่องชำระเงิน
   const canPay = !notYetDue && detail.invoice_status !== 'ชำระแล้ว' && detail.invoice_status !== 'ยกเลิก';
 
@@ -321,7 +431,7 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
                 }}>
                   <Ionicons name={st.icon} size={19} color={st.color} />
                 </View>
-                <Text style={{ color: '#334155', fontSize: 13.5, fontWeight: '800', flex: 1 }} numberOfLines={2}>{line.item_name}</Text>
+                <Text style={{ color: '#334155', fontSize: 13.5, fontWeight: '800', flex: 1 }} numberOfLines={2}>{cleanItemName(line.item_name)}</Text>
               </View>
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
                 <Text style={{ color: notYetDue ? '#94A3B8' : st.color, fontSize: 15, fontWeight: '900' }}>
@@ -380,23 +490,23 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
         )}
       </View>
 
-      {/* ใบเสร็จ PDF — แสดงเมื่อบิลนี้ชำระครบแล้วเท่านั้น */}
-      {detail.invoice_status === 'ชำระแล้ว' && (
+      {/* ดูใบชำระเงิน (PDF จาก backend) — แสดงทุกบิลจริง (ยังไม่ใช่ placeholder) */}
+      {!detail.__placeholder && (
         <TouchableOpacity
-          onPress={generateReceipt}
-          disabled={receiptGenerating}
+          onPress={openInvoicePdf}
+          disabled={pdfLoading}
           style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
             backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0',
             borderRadius: 16, paddingVertical: 14, marginBottom: 16,
           }}
         >
-          {receiptGenerating ? (
+          {pdfLoading ? (
             <ActivityIndicator color="#16A34A" />
           ) : (
             <Ionicons name="document-text-outline" size={18} color="#16A34A" />
           )}
-          <Text style={{ color: '#16A34A', fontWeight: '900', fontSize: 13 }}>ดูใบเสร็จรับเงิน (PDF)</Text>
+          <Text style={{ color: '#16A34A', fontWeight: '900', fontSize: 13 }}>ดูใบชำระเงิน (PDF)</Text>
         </TouchableOpacity>
       )}
 
@@ -406,6 +516,56 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14 }}>
             <Ionicons name="wallet-outline" size={16} color="#64748B" />
             <Text style={{ fontSize: 13, fontWeight: '900', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.3 }}>ชำระเงิน</Text>
+          </View>
+
+          {omisePaid ? (
+            // จ่ายสำเร็จ (ยืนยันอัตโนมัติ)
+            <LinearGradient colors={['#10B981', '#059669']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: 20, padding: 22, alignItems: 'center' }}>
+              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                <Ionicons name="checkmark-sharp" size={32} color="white" />
+              </View>
+              <Text style={{ color: 'white', fontWeight: '900', fontSize: 19 }}>ชำระเงินสำเร็จ!</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12.5, marginTop: 4 }}>ระบบยืนยันการชำระอัตโนมัติแล้ว</Text>
+            </LinearGradient>
+          ) : omiseCharge ? (
+            // แสดง QR Omise + รอชำระ (ยืนยันเอง)
+            <View style={{ alignItems: 'center', backgroundColor: '#F8FAFF', borderWidth: 1, borderColor: '#DBEAFE', borderRadius: 20, padding: 20 }}>
+              <Image source={{ uri: omiseCharge.qrImage }} style={{ width: 210, height: 210, borderRadius: 14 }} resizeMode="contain" />
+              <Text style={{ marginTop: 10, fontSize: 17, fontWeight: '900', color: '#0F172A' }}>สแกนจ่าย ฿{Number(omiseCharge.amount || 0).toLocaleString()}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, backgroundColor: '#EEF2FF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 }}>
+                <Animated.View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#4F46E5', opacity: omisePulse.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) }} />
+                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#4338CA' }}>กำลังรอชำระเงิน · ยืนยันอัตโนมัติ</Text>
+              </View>
+              <Text style={{ fontSize: 11.5, color: '#94A3B8', marginTop: 8, textAlign: 'center' }}>เปิดแอปธนาคาร สแกน QR แล้วจ่าย — ระบบยืนยันให้เองในไม่กี่วินาที</Text>
+              <TouchableOpacity onPress={() => setOmiseCharge(null)} style={{ marginTop: 12 }}>
+                <Text style={{ color: '#94A3B8', fontWeight: '700', fontSize: 12.5 }}>เปลี่ยนวิธีชำระ</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+          <>
+          {/* ปุ่มจ่ายอัตโนมัติ (แนะนำ) — ไล่เฉดม่วงพรีเมียม */}
+          <TouchableOpacity onPress={startOmisePay} disabled={omiseLoading} activeOpacity={0.9} style={{ borderRadius: 18, overflow: 'hidden', marginBottom: 14 }}>
+            <LinearGradient colors={['#6366F1', '#4F46E5', '#4338CA']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ paddingVertical: 15, paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 42, height: 42, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <Ionicons name="flash" size={22} color="white" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ color: 'white', fontWeight: '900', fontSize: 15 }}>จ่าย QR อัตโนมัติ</Text>
+                  <View style={{ backgroundColor: '#FDE68A', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 }}>
+                    <Text style={{ color: '#92400E', fontSize: 9.5, fontWeight: '900' }}>แนะนำ</Text>
+                  </View>
+                </View>
+                <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11.5, marginTop: 2 }}>จ่ายแล้วระบบยืนยันทันที ไม่ต้องแนบสลิป</Text>
+              </View>
+              {omiseLoading ? <ActivityIndicator color="white" /> : <Ionicons name="chevron-forward" size={20} color="white" />}
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: '#E2E8F0' }} />
+            <Text style={{ marginHorizontal: 10, fontSize: 11, color: '#94A3B8', fontWeight: '700' }}>หรือเลือกวิธีอื่น</Text>
+            <View style={{ flex: 1, height: 1, backgroundColor: '#E2E8F0' }} />
           </View>
 
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
@@ -516,6 +676,8 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
               </TouchableOpacity>
             </View>
           )}
+          </>
+          )}
         </View>
       )}
 
@@ -561,6 +723,34 @@ function InvoiceDetailCard({ detail, onPaid, onSlipPreview }) {
         )}
       </View>
       )}
+
+      {/* หน้าต่างดูใบชำระเงิน (PDF) — เว็บโชว์ในหน้าต่าง ไม่เด้งไปหน้าอื่น */}
+      <Modal visible={pdfVisible} transparent animationType="fade" onRequestClose={closePdf}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'center', alignItems: 'center', padding: Platform.OS === 'web' ? 20 : 0 }}>
+          <View style={{ width: '100%', maxWidth: 860, height: Platform.OS === 'web' ? '92%' : '100%', backgroundColor: 'white', borderRadius: Platform.OS === 'web' ? 16 : 0, overflow: 'hidden' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' }}>
+              <Text style={{ fontSize: 15, fontWeight: '900', color: '#1E293B' }}>ใบชำระเงิน</Text>
+              <TouchableOpacity onPress={closePdf} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <View style={{ flex: 1, backgroundColor: '#F1F5F9' }}>
+              {pdfLoading ? (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator size="large" color="#0194F3" />
+                  <Text style={{ marginTop: 10, color: '#64748B' }}>กำลังโหลดใบชำระเงิน...</Text>
+                </View>
+              ) : Platform.OS === 'web' && pdfUrl ? (
+                React.createElement('iframe', { src: pdfUrl, style: { width: '100%', height: '100%', border: 'none' }, title: 'ใบชำระเงิน' })
+              ) : (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                  <Text style={{ color: '#64748B', textAlign: 'center' }}>ไม่สามารถแสดงตัวอย่างได้</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

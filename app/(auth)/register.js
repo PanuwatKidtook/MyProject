@@ -1,12 +1,14 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -22,6 +24,22 @@ import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
 
 const { width, height } = Dimensions.get('window');
+
+// ฟอนต์ serif ให้เข้าชุดกับหน้า login / หน้าหลัก
+const SERIF = Platform.select({ ios: 'Georgia', android: 'serif', default: 'Georgia, "Times New Roman", serif' });
+
+// รูปตึกใช้เป็นแผงซ้าย/บน (เหมือนหน้า login)
+const HERO_IMG = require('../../assets/images/hero-around-loei.jpg');
+const heroImgStyle = { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' };
+if (Platform.OS === 'web' && typeof document !== 'undefined' && !document.getElementById('reg-hero-fit')) {
+  const s = document.createElement('style');
+  s.id = 'reg-hero-fit';
+  // จอกว้าง = cover (เต็มพื้นหลัง) · มือถือ = contain (เห็นตึกทั้งหลัง พอดีกรอบ)
+  s.textContent =
+    '#regHeroBg img{object-fit:cover !important;object-position:center !important;}' +
+    '#regHeroBand img{object-fit:contain !important;object-position:center !important;}';
+  document.head.appendChild(s);
+}
 
 // endpoint ยืนยันอีเมลด้วย OTP หลังสมัคร (backend สร้างบัญชีแบบยังไม่ยืนยัน + ส่ง OTP ตอน /register)
 const API_BASE_URL = 'https://projeccty3-server.onrender.com/api';
@@ -55,6 +73,14 @@ export default function RegisterScreen() {
   const [lang, setLang] = useState('TH');
   const [loading, setLoading] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
+
+  // จอกว้าง = split รูปซ้าย/ฟอร์มขวา · จอแคบ = รูปบน/ฟอร์มล่าง
+  const [screen, setScreen] = useState(Dimensions.get('window'));
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => setScreen(window));
+    return () => sub?.remove?.();
+  }, []);
+  const isWide = screen.width >= 900;
 
   // ขั้นยืนยันอีเมลด้วย OTP หลังสมัครสำเร็จ (เฉพาะสมัครปกติ — social ไม่ต้องยืนยันเพราะอีเมลมาจาก provider แล้ว)
   const [otpVisible, setOtpVisible] = useState(false);
@@ -98,6 +124,11 @@ export default function RegisterScreen() {
   const [phone_number, setPhoneNumber] = useState('');
   const [email, setEmail] = useState(lockedEmail || '');
   const [user_role, setUserRole] = useState('Daily_Tenant');
+
+  // ยืนยันรหัสผ่าน + ปุ่มแสดง/ซ่อน (ตามดีไซน์ใหม่)
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const [errors, setErrors] = useState({
     full_name: false,
@@ -187,25 +218,27 @@ export default function RegisterScreen() {
       full_name: !full_name.trim(),
       username: !username.trim(),
       password: !password.trim(),
-      phone_number: !phone_number.trim(),
+      phone_number: false,
     };
 
     setErrors(newErrors);
 
-    if (newErrors.full_name || newErrors.username || newErrors.password || newErrors.phone_number) {
+    if (newErrors.full_name || newErrors.username || newErrors.password) {
       return;
     }
 
-    // ตรวจสอบสถานะการยอมรับเงื่อนไขเงื่อนไขก่อนดำเนินการส่ง API
-    if (!termsAccepted) {
-      setTermsError(true);
-      showMessage({
-        message: lang === 'TH' ? 'ข้อผิดพลาด' : 'Error',
-        description: lang === 'TH' ? 'กรุณายอมรับเงื่อนไขการใช้งานก่อนสมัคร' : 'Please accept the terms before registering',
-        type: "danger",
-        icon: "danger",
-        floating: true,
-      });
+    // อีเมลบังคับ (ตรงกับ backend)
+    if (!email.trim()) {
+      Alert.alert(lang === 'TH' ? 'ข้อผิดพลาด' : 'Error', lang === 'TH' ? 'กรุณากรอกอีเมล' : 'Please enter your email');
+      return;
+    }
+    // รหัสผ่านอย่างน้อย 6 ตัว + ต้องยืนยันให้ตรงกัน
+    if (password.length < 6) {
+      Alert.alert(lang === 'TH' ? 'ข้อผิดพลาด' : 'Error', lang === 'TH' ? 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' : 'Password must be at least 6 characters');
+      return;
+    }
+    if (password !== confirmPassword) {
+      Alert.alert(lang === 'TH' ? 'ข้อผิดพลาด' : 'Error', lang === 'TH' ? 'รหัสผ่านไม่ตรงกัน' : 'Passwords do not match');
       return;
     }
 
@@ -374,97 +407,108 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
-      <StatusBar barStyle="dark-content" />
-      
-      <View style={{ 
-        flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, 
-        paddingVertical: 15, backgroundColor: 'white', justifyContent: 'space-between'
-      }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity 
-            onPress={() => router.back()} 
-            style={{ 
-              width: 45, height: 45, borderRadius: 15, 
-              backgroundColor: '#F0F8FF', justifyContent: 'center', alignItems: 'center' 
-            }}
-          >
-            <Ionicons name="arrow-back" size={24} color="#0194F3" />
-          </TouchableOpacity>
-          <Text style={{ fontSize: 20, fontWeight: 'bold', marginLeft: 15, color: '#333' }}>
-            {t.header}
-          </Text>
-        </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#0B1F33' }}>
+      <StatusBar barStyle="light-content" />
 
-        <TouchableOpacity 
-          onPress={() => setLang(lang === 'TH' ? 'EN' : 'TH')} 
-          style={{ 
-            borderWidth: 1, borderColor: '#0194F3', paddingHorizontal: 12, 
-            paddingVertical: 6, borderRadius: 8, backgroundColor: '#F0F8FF'
-          }}
-        >
-          <Text style={{ color: '#0194F3', fontWeight: 'bold', fontSize: 12 }}>
-            {lang === 'TH' ? 'EN' : 'TH'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 25 }}>
-          
-          <View style={{ marginBottom: 30 }}>
-            <Text style={{ fontSize: 28, fontWeight: 'bold', color: '#0194F3' }}>{t.start}</Text>
-            <Text style={{ fontSize: 16, color: '#777', marginTop: 5 }}>{t.sub}</Text>
-          </View>
+        <View style={{ flex: 1, backgroundColor: '#0B1F33' }}>
+          {/* รูปตึกเต็มพื้นหลัง + ไล่เฉด (ซ้ายเข้ม → ขวาสว่าง ให้เห็นภาพผ่านกระจกฝ้า) */}
+          {isWide && (
+            <>
+              <Image nativeID="regHeroBg" source={HERO_IMG} resizeMode="cover" style={heroImgStyle} />
+              <LinearGradient
+                colors={['rgba(4,12,26,0.78)', 'rgba(6,18,38,0.5)', 'rgba(12,28,50,0.28)']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              />
+            </>
+          )}
+
+          {/* ปุ่มย้อนกลับ (ซ้ายบน) + สลับภาษา (ขวาบนสุด — ลอยเหนือทุกอย่าง ไม่โดนทับ) */}
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={{ position: 'absolute', top: Platform.OS === 'web' ? 16 : 44, left: 16, zIndex: 30, width: 42, height: 42, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.18)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }}
+          >
+            <Ionicons name="arrow-back" size={21} color="white" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setLang(lang === 'TH' ? 'EN' : 'TH')}
+            style={{ position: 'absolute', top: Platform.OS === 'web' ? 16 : 44, right: 16, zIndex: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,0.75)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.30)' }}
+          >
+            <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 12 }}>{lang === 'TH' ? 'EN' : 'TH'}</Text>
+          </TouchableOpacity>
+
+          <View style={{ flex: 1, flexDirection: isWide ? 'row' : 'column' }}>
+            {/* แบรนด์ (จอกว้าง=โปร่งทับรูป · มือถือ=แบนเนอร์รูปตึกเต็มพอดีกรอบ) */}
+            <View style={isWide ? { flex: 1 } : { height: 290, overflow: 'hidden' }}>
+              {!isWide && (
+                <>
+                  <Image nativeID="regHeroBand" source={HERO_IMG} resizeMode="contain" style={heroImgStyle} />
+                  <LinearGradient
+                    colors={['rgba(4,12,26,0.10)', 'rgba(4,12,26,0.26)', 'rgba(6,18,38,0.60)']}
+                    start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                  />
+                </>
+              )}
+              <View style={{ flex: 1, justifyContent: 'space-between', padding: isWide ? 40 : 22, paddingTop: isWide ? 74 : 70, paddingBottom: isWide ? 46 : 20 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="business" size={19} color="white" />
+                  <Text style={{ color: 'white', fontWeight: '800', letterSpacing: 2, marginLeft: 8, fontSize: 13 }}>AROUND LOEI</Text>
+                </View>
+                <View>
+                  <Text style={{ color: 'rgba(255,255,255,0.9)', fontFamily: SERIF, fontStyle: 'italic', fontSize: isWide ? 22 : 16, letterSpacing: 0.5 }}>
+                    {lang === 'TH' ? 'เริ่มต้น' : "Let's start a"}
+                  </Text>
+                  <Text style={{ color: 'white', fontFamily: SERIF, fontSize: isWide ? 42 : 26, fontWeight: '700', lineHeight: isWide ? 50 : 32, textShadowColor: 'rgba(0,0,0,0.4)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 12 }}>
+                    {lang === 'TH' ? 'การเดินทางครั้งใหม่' : 'new journey'}
+                  </Text>
+                  <View style={{ width: 56, height: 3, borderRadius: 3, backgroundColor: '#D9B25F', marginTop: 12 }} />
+                </View>
+              </View>
+            </View>
+
+            {/* ===== แผงฟอร์มกระจกฝ้า (เบลอ + มุมโค้งน้อย) ===== */}
+            <View style={isWide
+              ? { flex: 1.05, backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.97)', marginLeft: -20, borderTopLeftRadius: 18, borderBottomLeftRadius: 18, overflow: 'hidden', ...(Platform.OS === 'web' ? { backdropFilter: 'blur(18px) saturate(150%)', WebkitBackdropFilter: 'blur(18px) saturate(150%)' } : {}) }
+              : { flex: 1, backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.86)' : 'rgba(255,255,255,0.97)', marginTop: -18, borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: 'hidden', ...(Platform.OS === 'web' ? { backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' } : {}) }}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ flexGrow: 1, justifyContent: isWide ? 'center' : 'flex-start', paddingHorizontal: isWide ? 52 : 24, paddingTop: isWide ? 40 : 30, paddingBottom: 40 }}
+            >
+              <View style={{ width: '100%', maxWidth: 440, alignSelf: 'center' }}>
+              <Text style={{ fontSize: 26, fontFamily: SERIF, fontWeight: '700', color: '#16324F' }}>{t.start}</Text>
+              <Text style={{ fontSize: 14, color: '#6B7B8C', marginTop: 4, marginBottom: 22 }}>{t.sub}</Text>
 
           <View>
-            <InputBox
-              label={t.name}
-              icon="user"
-              placeholder={t.namePlace}
-              locked={lockFullName}
-              value={full_name}
-              error={errors.full_name}
-              onChangeText={(text) => {
-                setFullName(text);
-                if (text) setErrors(prev => ({ ...prev, full_name: false }));
-              }}
-            />
-
-            <InputBox
+            <FormField
               label={t.email}
-              icon="mail"
-              placeholder="Username"
+              required
+              placeholder={lang === 'TH' ? 'ไม่แสดงในระบบ' : 'Used for login'}
               autoCapitalize="none"
               locked={lockUsername}
               value={username}
               error={errors.username}
-              onChangeText={(text) => {
-                setUsername(text);
-                if (text) setErrors(prev => ({ ...prev, username: false }));
-              }}
+              onChangeText={(text) => { setUsername(text); if (text) setErrors(prev => ({ ...prev, username: false })); }}
             />
 
-            <InputBox 
-              label={t.phone} 
-              icon="phone" 
-              placeholder={t.phonePlace} 
-              keyboardType="phone-pad"
-              value={phone_number}
-              error={errors.phone_number}
-              onChangeText={(text) => {
-                setPhoneNumber(text);
-                if (text) setErrors(prev => ({ ...prev, phone_number: false }));
-              }}
+            <FormField
+              label={t.name}
+              required
+              placeholder={t.namePlace}
+              locked={lockFullName}
+              value={full_name}
+              error={errors.full_name}
+              onChangeText={(text) => { setFullName(text); if (text) setErrors(prev => ({ ...prev, full_name: false })); }}
             />
 
-            <InputBox
+            <FormField
               label={t.emailLabel}
-              icon="mail"
-              placeholder={t.emailPlace}
+              required
+              placeholder="you@example.com"
               keyboardType="email-address"
               autoCapitalize="none"
               locked={lockEmail}
@@ -472,116 +516,85 @@ export default function RegisterScreen() {
               onChangeText={setEmail}
             />
 
-            <InputBox
+            <FormField
+              label={t.phone}
+              placeholder={t.phonePlace}
+              keyboardType="phone-pad"
+              value={phone_number}
+              onChangeText={setPhoneNumber}
+            />
+
+            <FormField
               label={t.pass}
-              icon="lock"
-              placeholder="••••••••"
-              secureTextEntry={!lockPassword}
+              required
+              placeholder={lang === 'TH' ? 'อย่างน้อย 6 ตัวอักษร' : 'At least 6 characters'}
+              secureTextEntry={!showPw}
               locked={lockPassword}
               value={password}
               error={errors.password}
-              onChangeText={(text) => {
-                setPassword(text);
-                if (text) setErrors(prev => ({ ...prev, password: false }));
-              }}
+              onChangeText={(text) => { setPassword(text); if (text) setErrors(prev => ({ ...prev, password: false })); }}
+              rightAccessory={!lockPassword ? (
+                <TouchableOpacity onPress={() => setShowPw(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Feather name={showPw ? 'eye-off' : 'eye'} size={18} color="#8A94A0" />
+                </TouchableOpacity>
+              ) : null}
             />
 
-            <View style={{ marginBottom: 20 }}>
-              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#444', marginBottom: 8, marginLeft: 5 }}>
-                {t.roleLabel}
+            <FormField
+              label={lang === 'TH' ? 'ยืนยันรหัสผ่าน' : 'Confirm Password'}
+              required
+              placeholder={lang === 'TH' ? 'กรอกรหัสผ่านอีกครั้ง' : 'Re-enter your password'}
+              secureTextEntry={!showConfirm}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              rightAccessory={(
+                <TouchableOpacity onPress={() => setShowConfirm(v => !v)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Feather name={showConfirm ? 'eye-off' : 'eye'} size={18} color="#8A94A0" />
+                </TouchableOpacity>
+              )}
+            />
+
+            {/* ประเภทสมาชิก (บังคับเลือก — ตรงกับ backend) */}
+            <View style={{ marginBottom: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 6 }}>
+                {lang === 'TH' ? 'ประเภทสมาชิก' : 'Member Type'} <Text style={{ color: '#EF4444' }}>*</Text>
               </Text>
               <View style={{ flexDirection: 'row', gap: 10 }}>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setUserRole('Daily_Tenant')}
-                  style={{
-                    flex: 1,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: user_role === 'Daily_Tenant' ? '#0194F3' : 'white',
-                    borderRadius: 18,
-                    height: 56,
-                    borderWidth: 1.5,
-                    borderColor: user_role === 'Daily_Tenant' ? '#0194F3' : '#E1E9F0',
-                  }}
-                >
-                  <Ionicons name="sunny-outline" size={18} color={user_role === 'Daily_Tenant' ? 'white' : '#0194F3'} style={{ marginRight: 8 }} />
-                  <Text style={{ fontWeight: 'bold', fontSize: 15, color: user_role === 'Daily_Tenant' ? 'white' : '#444' }}>
-                    {t.roleDaily}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => setUserRole('Monthly_Tenant')}
-                  style={{
-                    flex: 1,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: user_role === 'Monthly_Tenant' ? '#0194F3' : 'white',
-                    borderRadius: 18,
-                    height: 56,
-                    borderWidth: 1.5,
-                    borderColor: user_role === 'Monthly_Tenant' ? '#0194F3' : '#E1E9F0',
-                  }}
-                >
-                  <Ionicons name="calendar-outline" size={18} color={user_role === 'Monthly_Tenant' ? 'white' : '#0194F3'} style={{ marginRight: 8 }} />
-                  <Text style={{ fontWeight: 'bold', fontSize: 15, color: user_role === 'Monthly_Tenant' ? 'white' : '#444' }}>
-                    {t.roleMonthly}
-                  </Text>
-                </TouchableOpacity>
+                {[
+                  { value: 'Daily_Tenant', label: lang === 'TH' ? 'ผู้เช่ารายวัน' : 'Daily Tenant', desc: lang === 'TH' ? 'จองห้องพักแบบรายวัน' : 'Book by day' },
+                  { value: 'Monthly_Tenant', label: lang === 'TH' ? 'ผู้เช่ารายเดือน' : 'Monthly Tenant', desc: lang === 'TH' ? 'เช่าอยู่ประจำแบบรายเดือน' : 'Stay monthly' },
+                ].map((r) => {
+                  const active = user_role === r.value;
+                  return (
+                    <TouchableOpacity
+                      key={r.value}
+                      activeOpacity={0.85}
+                      onPress={() => setUserRole(r.value)}
+                      style={{
+                        flex: 1,
+                        borderRadius: 14,
+                        borderWidth: 1.5,
+                        borderColor: active ? '#0194F3' : '#CBD5E1',
+                        backgroundColor: active ? 'rgba(1,148,243,0.08)' : '#F8FAFC',
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                      }}
+                    >
+                      <Text style={{ fontSize: 13.5, fontWeight: '800', color: active ? '#0178C7' : '#334155' }}>{r.label}</Text>
+                      <Text style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 2 }}>{r.desc}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
-              <Text style={{ fontSize: 12, color: '#999', marginTop: 8, marginLeft: 5 }}>{t.roleHint}</Text>
             </View>
           </View>
 
-          {/* ส่วนเงื่อนไขและ Checkbox ที่เพิ่มเข้ามาใหม่ */}
-          <View style={{ marginBottom: 25 }}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={openTermsModal}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingHorizontal: 10
-              }}
-            >
-              <View
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 4,
-                  borderWidth: 1.5,
-                  borderColor: termsError ? '#FF3B30' : '#B5B5B5',
-                  backgroundColor: termsAccepted ? '#0194F3' : 'white',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 8
-                }}
-              >
-                {termsAccepted ? (
-                  <Ionicons name="checkmark" size={14} color="white" />
-                ) : null}
-              </View>
-
-              <Text style={{ fontSize: 13, color: termsError ? '#FF3B30' : '#999', textAlign: 'center', lineHeight: 20 }}>
-                {t.terms}
-                <Text style={{ color: '#0194F3', fontWeight: 'bold' }}>{t.condition}</Text> 
-                {lang === 'TH' ? 'และ' : 'and'}
-                <Text style={{ color: '#0194F3', fontWeight: 'bold' }}>{t.privacy}</Text>
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity 
-            style={{ 
-              backgroundColor: '#0194F3', paddingVertical: 18, borderRadius: 20, 
-              alignItems: 'center', elevation: 8, marginBottom: 20,
-              shadowColor: "#0194F3", shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.3, shadowRadius: 10,
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#13294B', paddingVertical: 16, borderRadius: 16,
+              alignItems: 'center', elevation: 8, marginTop: 22, marginBottom: 14,
+              shadowColor: "#13294B", shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.35, shadowRadius: 12,
               opacity: loading ? 0.7 : 1
             }}
             onPress={handleRegister}
@@ -590,20 +603,24 @@ export default function RegisterScreen() {
             {loading ? (
               <ActivityIndicator color="white" />
             ) : (
-              <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>{t.btn}</Text>
+              <Text style={{ color: 'white', fontSize: 17, fontWeight: 'bold', letterSpacing: 0.5 }}>{lang === 'TH' ? 'สมัครสมาชิก' : 'Sign Up'}</Text>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => router.push('/login')}
-            style={{ alignItems: 'center', marginBottom: 40 }}
+            style={{ alignItems: 'center', marginTop: 4 }}
           >
             <Text style={{ color: '#777', fontSize: 15 }}>
-              {t.haveAcc}<Text style={{ color: '#0194F3', fontWeight: 'bold' }}>{t.login}</Text>
+              {t.haveAcc}<Text style={{ color: '#C79A3E', fontWeight: 'bold' }}>{t.login}</Text>
             </Text>
           </TouchableOpacity>
 
-        </ScrollView>
+              </View>
+            </ScrollView>
+          </View>
+          </View>
+        </View>
       </KeyboardAvoidingView>
 
       {/* Modal เงื่อนไขการใช้งาน 10 ข้อ */}
@@ -874,6 +891,30 @@ export default function RegisterScreen() {
     </SafeAreaView>
   );
 }
+
+// ช่องกรอกแบบเรียบ (ตามดีไซน์เว็บ): label + * + กล่องมีขอบ ไม่มีไอคอนซ้าย, รองรับปุ่มขวา (ตาแสดง/ซ่อน)
+const FormField = ({ label, required, error, locked, rightAccessory, ...props }) => (
+  <View style={{ marginBottom: 16 }}>
+    <Text style={{ fontSize: 13, fontWeight: '700', color: error ? '#EF4444' : '#334155', marginBottom: 6 }}>
+      {label} {required ? <Text style={{ color: '#EF4444' }}>*</Text> : null}
+    </Text>
+    <View style={{
+      flexDirection: 'row', alignItems: 'center',
+      backgroundColor: locked ? '#F0F1F3' : '#F8FAFC',
+      borderWidth: 1.5, borderColor: error ? '#EF4444' : '#CBD5E1',
+      borderRadius: 14, paddingHorizontal: 14, height: 52,
+    }}>
+      <TextInput
+        style={{ flex: 1, fontSize: 15, color: locked ? '#8A94A0' : '#0F172A' }}
+        placeholderTextColor="#9AA6B2"
+        editable={!locked}
+        {...props}
+      />
+      {rightAccessory}
+      {locked ? <Feather name="lock" size={15} color="#B0BCC7" style={{ marginLeft: 8 }} /> : null}
+    </View>
+  </View>
+);
 
 const InputBox = ({ label, icon, error, locked, ...props }) => (
   <View style={{ marginBottom: 20 }}>

@@ -1,12 +1,15 @@
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Easing,
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -18,6 +21,26 @@ import {
   useWindowDimensions
 } from 'react-native';
 import api from '../../lib/api';
+
+// ฟอนต์ serif หรู + สีทอง accent ให้เข้าชุดกับหน้า login
+const SERIF = Platform.select({ ios: 'Georgia', android: 'serif', default: 'Georgia, "Times New Roman", serif' });
+const GOLD = '#D9B25F';
+// รูปตึกจริง (ใช้ร่วมกับหน้า login) — ครอบเต็มแบบไม่ยืดบนเว็บ
+const HERO_IMG = require('../../assets/images/hero-around-loei.jpg');
+// รูปสไลด์หน้าหลัก (รูปตึกเดิม + ห้องพัก/วิว) — ครอบเต็มไม่ยืดบนเว็บ
+const HERO_SLIDES = [
+  HERO_IMG,
+  require('../../assets/images/hero-slide-1.jpg'),
+  require('../../assets/images/hero-slide-2.jpg'),
+  require('../../assets/images/hero-slide-3.jpg'),
+  require('../../assets/images/hero-slide-4.jpg'),
+];
+if (Platform.OS === 'web' && typeof document !== 'undefined' && !document.getElementById('home-hero-fit')) {
+  const s = document.createElement('style');
+  s.id = 'home-hero-fit';
+  s.textContent = 'img[src*="hero-around-loei"],img[src*="hero-slide"]{object-fit:cover !important;object-position:center !important;}';
+  document.head.appendChild(s);
+}
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -38,70 +61,92 @@ export default function HomeScreen() {
   const windowWidth = width;
   const isMobile = width <= 768;
 
-  const scrollRef = useRef(null);
   const [currentSlide, setCurrentSlide] = useState(0);
-  const images = [
-    'https://images.unsplash.com/photo-1554995207-c18c203602cb?q=80&w=1200',
-    'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?q=80&w=1200',
-    'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?q=80&w=1200'
-  ];
+  // รูปตึกเดิม + รูปห้อง/วิว → สไลด์ได้ (เลื่อนเอง + อัตโนมัติ)
+  const images = HERO_SLIDES;
+  const slideCount = images.length;
+  const hasSlider = slideCount > 1;
 
+  // คารูเซลแบบ translateX ลื่น ๆ (รูปเก่าไถออกซ้าย รูปใหม่เลื่อนเข้ามาจากขวา วนไม่สะดุด)
+  const slideX = useRef(new Animated.Value(0)).current; // px, 0 = สไลด์แรก
+  const animatingRef = useRef(false);
+
+  // ปรับตำแหน่งเมื่อความกว้างจอเปลี่ยน (กันภาพเยื้อง)
   useEffect(() => {
-    const timer = setInterval(() => {
-      let nextSlide = currentSlide + 1;
-      if (nextSlide >= images.length) {
-        nextSlide = 0;
-      }
-      scrollToSlide(nextSlide);
-    }, 4000);
+    slideX.setValue(-currentSlide * windowWidth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowWidth]);
 
-    return () => clearInterval(timer);
-  }, [currentSlide, windowWidth]);
+  const animateTo = (toIndex, cb) => {
+    Animated.timing(slideX, {
+      toValue: -toIndex * windowWidth,
+      duration: 750,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: Platform.OS !== 'web', // เว็บใช้ JS driver — callback ทำงานชัวร์ ไม่ค้าง
+    }).start(() => { if (cb) cb(); });
+  };
 
-  const scrollToSlide = (index) => {
-    setCurrentSlide(index);
-    scrollRef.current?.scrollTo({
-      x: index * windowWidth,
-      animated: true,
+  const goNext = () => {
+    if (animatingRef.current || !hasSlider) return;
+    animatingRef.current = true;
+    const next = currentSlide + 1; // อาจเท่ากับ slideCount = โคลนของรูปแรก (ต่อท้ายไว้)
+    animateTo(next, () => {
+      animatingRef.current = false;
+      if (next >= slideCount) { slideX.setValue(0); setCurrentSlide(0); } // ถึงโคลน → รีเซ็ตแนบเนียน
+      else setCurrentSlide(next);
     });
   };
 
-  const handlePrevSlide = () => {
-    const prevSlide = currentSlide === 0 ? images.length - 1 : currentSlide - 1;
-    scrollToSlide(prevSlide);
-  };
-
-  const handleNextSlide = () => {
-    const nextSlide = currentSlide === images.length - 1 ? 0 : currentSlide + 1;
-    scrollToSlide(nextSlide);
-  };
-
-  const handleScroll = (event) => {
-    const contentOffsetX = event.nativeEvent.contentOffset.x;
-    const currentIndex = Math.round(contentOffsetX / windowWidth);
-    if (currentIndex !== currentSlide && currentIndex >= 0 && currentIndex < images.length) {
-      setCurrentSlide(currentIndex);
+  const goPrev = () => {
+    if (animatingRef.current || !hasSlider) return;
+    animatingRef.current = true;
+    if (currentSlide === 0) {
+      // กระโดดไปหลังโคลนแล้วสไลด์กลับ (รูปใหม่เลื่อนเข้าจากซ้าย)
+      slideX.setValue(-slideCount * windowWidth);
+      animateTo(slideCount - 1, () => { animatingRef.current = false; setCurrentSlide(slideCount - 1); });
+    } else {
+      const prev = currentSlide - 1;
+      animateTo(prev, () => { animatingRef.current = false; setCurrentSlide(prev); });
     }
   };
 
-  const translateY = useRef(new Animated.Value(0)).current;
+  // เลื่อนอัตโนมัติทุก 4 วิ
+  useEffect(() => {
+    if (!hasSlider) return;
+    const timer = setInterval(goNext, 4000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSlide, windowWidth]);
 
+  const handlePrevSlide = goPrev;
+  const handleNextSlide = goNext;
+
+  // เอฟเฟกต์เข้าแบบ fade + เลื่อนขึ้นลื่น ๆ ครั้งเดียวตอนเปิดหน้า (ไม่กระตุกวนช้า)
+  const heroAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(heroAnim, {
+      toValue: 1,
+      duration: 650,
+      delay: 120,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, []);
+  const heroTranslate = heroAnim.interpolate({ inputRange: [0, 1], outputRange: [22, 0] });
+
+  // กระพริบลื่น ๆ ปานกลาง (glow/pulse) วนต่อเนื่องที่หัวข้อ
+  const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(translateY, {
-          toValue: -8,
-          duration: 1200,
-          useNativeDriver: false,
-        }),
-        Animated.timing(translateY, {
-          toValue: 0,
-          duration: 1200,
-          useNativeDriver: false,
-        }),
+        Animated.timing(pulse, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulse, { toValue: 0, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
       ])
     ).start();
   }, []);
+  const pulseOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] });
+  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] });
 
   const normalizeStatus = (status) => String(status || '').trim().toLowerCase();
 
@@ -498,77 +543,118 @@ export default function HomeScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} bounces={false} style={{ backgroundColor: '#F8F9FA' }}>
         <View style={{ height: isMobile ? 320 : 420, width: '100%', position: 'relative', overflow: 'hidden' }}>
-          <ScrollView
-            ref={scrollRef}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onMomentumScrollEnd={handleScroll}
-            style={{ width: '100%', height: '100%' }}
+          <Animated.View
+            style={{
+              flexDirection: 'row', height: '100%', width: windowWidth * (slideCount + 1),
+              transform: [{ translateX: slideX }],
+            }}
+            pointerEvents="none"
           >
-            {images.map((imgUrl, index) => (
+            {/* ต่อรูปแรกไว้ท้ายสุด เพื่อวนลูปไปข้างหน้าแบบไม่สะดุด */}
+            {[...images, images[0]].map((imgUrl, index) => (
               <View key={index} style={{ width: windowWidth, height: '100%' }}>
-                <Image source={{ uri: imgUrl }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+                <Image source={typeof imgUrl === 'string' ? { uri: imgUrl } : imgUrl} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
               </View>
             ))}
-          </ScrollView>
+          </Animated.View>
 
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', pointerEvents: 'none' }} />
+          {/* ไล่เฉดทับรูปให้ดูพรีเมียมและอ่านง่าย */}
+          <LinearGradient
+            colors={['rgba(4,14,26,0.35)', 'rgba(4,14,26,0.15)', 'rgba(4,14,26,0.78)']}
+            locations={[0, 0.45, 1]}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            pointerEvents="none"
+          />
 
-          <TouchableOpacity onPress={handlePrevSlide} style={{ position: 'absolute', left: 15, top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.4)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
-            <Ionicons name="chevron-back" size={24} color="white" />
-          </TouchableOpacity>
+          {hasSlider && (
+            <>
+              <TouchableOpacity onPress={handlePrevSlide} style={{ position: 'absolute', left: 15, top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.4)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
+                <Ionicons name="chevron-back" size={24} color="white" />
+              </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleNextSlide} style={{ position: 'absolute', right: 15, top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.4)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
-            <Ionicons name="chevron-forward" size={24} color="white" />
-          </TouchableOpacity>
+              <TouchableOpacity onPress={handleNextSlide} style={{ position: 'absolute', right: 15, top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.4)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
+                <Ionicons name="chevron-forward" size={24} color="white" />
+              </TouchableOpacity>
 
-          <View style={{ position: 'absolute', bottom: 55, flexDirection: 'row', width: '100%', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
-            {images.map((_, index) => (
-              <View key={index} style={{ width: currentSlide === index ? 18 : 7, height: 7, borderRadius: 4, backgroundColor: currentSlide === index ? '#0194F3' : 'rgba(255,255,255,0.6)', marginHorizontal: 4 }} />
-            ))}
-          </View>
+              <View style={{ position: 'absolute', bottom: 55, flexDirection: 'row', width: '100%', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
+                {images.map((_, index) => (
+                  <View key={index} style={{ width: currentSlide === index ? 18 : 7, height: 7, borderRadius: 4, backgroundColor: currentSlide === index ? '#FFFFFF' : 'rgba(255,255,255,0.6)', marginHorizontal: 4 }} />
+                ))}
+              </View>
+            </>
+          )}
 
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40, pointerEvents: 'none' }}>
-            <Animated.View style={{ transform: [{ translateY }], alignItems: 'center' }}>
-              <Text style={{ color: 'white', fontSize: isMobile ? 26 : 36, fontWeight: '900', textAlign: 'center', marginBottom: 20, textShadowColor: 'rgba(0, 0, 0, 0.6)', textShadowOffset: { width: 1, height: 2 }, textShadowRadius: 8 }}>
-                {t.welcome}
-              </Text>
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32, paddingBottom: 20, pointerEvents: 'box-none' }}>
+            <Animated.View style={{ opacity: heroAnim, transform: [{ translateY: heroTranslate }], alignItems: 'center' }}>
+              <Animated.View style={{ alignItems: 'center', opacity: pulseOpacity, transform: [{ scale: pulseScale }] }}>
+                <Text style={{
+                  color: '#FFFFFF', fontFamily: SERIF, fontStyle: 'italic', fontWeight: '600',
+                  fontSize: isMobile ? 28 : 34, letterSpacing: 2.5, marginBottom: 2,
+                  textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 12,
+                }}>
+                  Welcome to
+                </Text>
+                <Text style={{
+                  color: 'white', fontFamily: SERIF, fontSize: isMobile ? 46 : 62, fontWeight: '700',
+                  textAlign: 'center', letterSpacing: 0.5, lineHeight: isMobile ? 56 : 74,
+                  textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 3 }, textShadowRadius: 18,
+                  ...(Platform.OS === 'web' ? { textShadow: '0 2px 10px rgba(0,0,0,0.55), 0 0 26px rgba(217,178,95,0.45)' } : {}),
+                }}>
+                  Around Loei
+                </Text>
+              </Animated.View>
+              <View style={{ width: 70, height: 3, borderRadius: 3, backgroundColor: GOLD, marginTop: 18, marginBottom: 26, shadowColor: GOLD, shadowOpacity: 0.8, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } }} />
+
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => handleBookNow(user ? 'book' : 'check')}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  borderRadius: 999, paddingHorizontal: 32, paddingVertical: 13,
+                  backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)',
+                  pointerEvents: 'auto',
+                  ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' } : {}),
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '800', fontSize: 15, letterSpacing: 1 }}>
+                  {t.bookNow}
+                </Text>
+                <Ionicons name="arrow-forward" size={17} color="white" />
+              </TouchableOpacity>
             </Animated.View>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => handleBookNow(user ? 'book' : 'check')}
-              style={{ borderWidth: 2, borderColor: 'white', paddingHorizontal: 32, paddingVertical: 12, backgroundColor: 'rgba(255, 255, 255, 0.15)', pointerEvents: 'auto' }}
-            >
-              <Text style={{ color: 'white', fontWeight: '900', fontSize: 15, letterSpacing: 1.5 }}>
-                {t.bookNow}
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
 
         <View style={{ marginTop: -40, backgroundColor: 'white', borderTopLeftRadius: 40, borderTopRightRadius: 40, padding: 25 }}>
           {!roomNumber && (
             <TouchableOpacity
-              activeOpacity={0.8}
+              activeOpacity={0.9}
               onPress={() => handleBookNow(user ? 'book' : 'check')}
               style={{
-                backgroundColor: '#0194F3',
-                padding: 20,
-                borderRadius: 25,
-                marginBottom: 20,
-                flexDirection: 'row',
-                alignItems: 'center'
+                borderRadius: 24, marginBottom: 22, overflow: 'hidden',
+                shadowColor: '#0178C7', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.35, shadowRadius: 18, elevation: 8,
               }}
             >
-              <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: 10, borderRadius: 15 }}>
-                <FontAwesome5 name="door-open" size={20} color="white" />
-              </View>
-              <Text style={{ flex: 1, marginLeft: 15, fontWeight: '900', fontSize: 18, color: 'white', letterSpacing: 0.5 }}>
-                {t.bookButton}
-              </Text>
-              <Ionicons name="chevron-forward-circle" size={28} color="white" />
+              <LinearGradient
+                colors={['#38B6FF', '#0194F3', '#0166C8']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ padding: 20, flexDirection: 'row', alignItems: 'center' }}
+              >
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.22)', padding: 12, borderRadius: 16 }}>
+                  <FontAwesome5 name="door-open" size={20} color="white" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 15 }}>
+                  <Text style={{ fontWeight: '900', fontSize: 18, color: 'white', letterSpacing: 0.5 }}>
+                    {t.bookButton}
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12, marginTop: 2, fontWeight: '600' }}>
+                    {lang === 'TH' ? 'เลือกห้องรายวัน / รายเดือน' : 'Daily / Monthly rooms'}
+                  </Text>
+                </View>
+                <View style={{ width: 3, height: 34, borderRadius: 3, backgroundColor: GOLD, marginRight: 12 }} />
+                <Ionicons name="chevron-forward-circle" size={30} color="white" />
+              </LinearGradient>
             </TouchableOpacity>
           )}
 
@@ -648,31 +734,38 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
 
-          <View style={{ marginBottom: 20 }}>
-            <Text style={{ fontSize: 36, fontWeight: 'bold', color: '#0194F3' }}>{t.price}<Text style={{ fontSize: 18, color: '#999', fontWeight: 'normal' }}>{t.unit}</Text></Text>
-            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#333', marginTop: 5 }}>{t.slogan}</Text>
+          <View style={{ marginBottom: 22 }}>
+            <View style={{ width: 46, height: 3, borderRadius: 3, backgroundColor: GOLD, marginBottom: 12 }} />
+            <Text style={{ fontSize: 38, fontWeight: '900', color: '#0194F3', letterSpacing: 0.3 }}>{t.price}<Text style={{ fontSize: 18, color: '#9AA6B2', fontWeight: 'normal' }}>{t.unit}</Text></Text>
+            <Text style={{ fontSize: 24, fontFamily: SERIF, fontWeight: '700', color: '#1B2A3A', marginTop: 6 }}>{t.slogan}</Text>
           </View>
 
-          <Text style={{ fontSize: 15, color: '#666', lineHeight: 24, marginBottom: 25 }}>{t.desc}</Text>
+          <Text style={{ fontSize: 15, color: '#5B6875', lineHeight: 25, marginBottom: 26 }}>{t.desc}</Text>
 
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A1A1A', marginBottom: 15 }}>{t.amenTitle}</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 }}>
+          <Text style={{ fontSize: 19, fontFamily: SERIF, fontWeight: '700', color: '#1A1A1A', marginBottom: 14 }}>{t.amenTitle}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 26 }}>
             {[
               { icon: 'wifi', label: 'WiFi' },
               { icon: 'snow', label: lang === 'TH' ? 'แอร์' : 'Air' },
               { icon: 'videocam', label: 'CCTV' },
               { icon: 'car', label: lang === 'TH' ? 'ที่จอดรถ' : 'Parking' }
             ].map((item, i) => (
-              <View key={i} style={{ width: '23%', alignItems: 'center', backgroundColor: '#F0F8FF', paddingVertical: 12, borderRadius: 15 }}>
-                <Ionicons name={item.icon} size={22} color="#0194F3" />
-                <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#0194F3', marginTop: 5 }}>{item.label}</Text>
+              <View key={i} style={{
+                width: '23%', alignItems: 'center', backgroundColor: 'white', paddingVertical: 16, borderRadius: 18,
+                borderWidth: 1, borderColor: '#EAF2FA',
+                shadowColor: '#0A2540', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 3,
+              }}>
+                <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: '#EAF6FF', justifyContent: 'center', alignItems: 'center', marginBottom: 8 }}>
+                  <Ionicons name={item.icon} size={22} color="#0194F3" />
+                </View>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#33475B' }}>{item.label}</Text>
               </View>
             ))}
           </View>
 
           <View style={{ height: 1, backgroundColor: '#EEE', marginBottom: 25 }} />
 
-          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A1A1A', marginBottom: 15 }}>ช่องทางการติดต่อ</Text>
+          <Text style={{ fontSize: 19, fontFamily: SERIF, fontWeight: '700', color: '#1A1A1A', marginBottom: 15 }}>{lang === 'TH' ? 'ช่องทางการติดต่อ' : 'Contact Us'}</Text>
 
           <TouchableOpacity onPress={() => openContact('line', 'aroundloei')} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#06C755', padding: 18, borderRadius: 18, marginBottom: 12 }}>
             <FontAwesome5 name="line" size={24} color="white" style={{ width: 35 }} />

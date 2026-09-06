@@ -1,10 +1,12 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
+  Image,
   Modal,
   Platform,
   SafeAreaView,
@@ -20,6 +22,20 @@ import api from '../../lib/api';
 import { openLineAuthNative, startGoogleLogin, startLineLogin } from '../../lib/socialAuth';
 
 const { width } = Dimensions.get('window');
+
+// รูปตึก Around Loei ฝั่งขวา (แต่งด้วย overlay/filter ให้ดูหรูกว่าต้นฉบับ)
+// หมายเหตุ: แทนไฟล์นี้ด้วยรูปตึกจริง (ชื่อเดิม hero-around-loei.png) ได้เลย
+const HERO_IMG = require('../../assets/images/hero-around-loei.jpg');
+const StyleSheet_absoluteFill = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 };
+
+// web: react-native-web ไม่ map resizeMode="cover" เป็น object-fit ให้เมื่อกำหนด width/height เอง
+// จึงฉีด CSS ตรง ๆ ให้รูป hero ครอบเต็มแบบไม่ยืดผิดสัดส่วน
+if (Platform.OS === 'web' && typeof document !== 'undefined' && !document.getElementById('hero-fit-style')) {
+  const s = document.createElement('style');
+  s.id = 'hero-fit-style';
+  s.textContent = 'img[src*="hero-around-loei"]{object-fit:cover !important;object-position:center !important;}';
+  document.head.appendChild(s);
+}
 
 // ถอด payload จาก JWT (id/username/role) — payload เป็น ASCII ล้วน ใช้ atob ได้
 function decodeJwt(token) {
@@ -38,6 +54,19 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [successVisible, setSuccessVisible] = useState(false);
   const [remember, setRemember] = useState(false);
+
+  // ขนาดหน้าจอแบบ reactive — จอกว้าง = split 2 คอลัมน์, จอแคบ = การ์ดซ้อนกลางบนรูปตึก
+  const [screen, setScreen] = useState(Dimensions.get('window'));
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => setScreen(window));
+    return () => sub?.remove?.();
+  }, []);
+  const isWide = screen.width >= 900;
+
+  // ฟอนต์ serif ให้ฟีล boutique/luxury (แบบหัวข้อ Serenique)
+  const serifFont = Platform.select({ ios: 'Georgia', android: 'serif', default: 'Georgia, "Times New Roman", serif' });
+  // ความสูงแบนเนอร์รูปบนมือถือ — ปรับตามจอให้พอดี ไม่ crop จนเพี้ยน
+  const bannerH = Math.max(230, Math.min(340, Math.round(screen.height * 0.34)));
 
   // สำหรับล็อกอินด้วย Email — หน้าต่างกรอกอีเมล/รหัสผ่าน + สถานะกำลังโหลด
   const [emailModalVisible, setEmailModalVisible] = useState(false);
@@ -529,33 +558,102 @@ export default function LoginScreen() {
     </View>
   );
 
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-      <StatusBar barStyle="dark-content" />
+  // ป้ายตำแหน่ง (กระจกฝ้า)
+  const locationBadge = (
+    <View style={{
+      alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center',
+      backgroundColor: 'rgba(255,255,255,0.16)', borderColor: 'rgba(255,255,255,0.32)',
+      borderWidth: 1, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 6, marginBottom: 14,
+      ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' } : {}),
+    }}>
+      <Ionicons name="location-sharp" size={14} color="#8FD3FF" style={{ marginRight: 6 }} />
+      <Text style={{ color: '#EAF6FF', fontSize: 12.5, fontWeight: '600' }}>
+        {lang === 'TH' ? 'อ.เมือง จ.เลย' : 'Mueang, Loei'}
+      </Text>
+    </View>
+  );
 
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 20, paddingTop: 10 }}>
-        <TouchableOpacity
-          onPress={() => setLang(lang === 'TH' ? 'EN' : 'TH')}
-          style={{ borderWidth: 1, borderColor: '#0194F3', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#F0F8FF' }}
-        >
-          <Text style={{ color: '#0194F3', fontWeight: 'bold', fontSize: 12 }}>{lang === 'TH' ? 'EN' : 'TH'}</Text>
-        </TouchableOpacity>
+  // กล่องข้อความโปรโมท (การ์ดกระจกฝ้าโปร่ง แบบ Serenique)
+  const promoBox = (compact) => (
+    <View style={{
+      backgroundColor: 'rgba(10,22,38,0.42)', borderColor: 'rgba(255,255,255,0.18)', borderWidth: 1,
+      borderRadius: 22, padding: compact ? 18 : 26, maxWidth: 460,
+      ...(Platform.OS === 'web' ? { backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)' } : {}),
+    }}>
+      {locationBadge}
+      <Text style={{
+        color: 'rgba(255,255,255,0.82)', fontFamily: serifFont, fontStyle: 'italic',
+        fontSize: compact ? 18 : 26, letterSpacing: 1,
+        textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 8,
+      }}>
+        Welcome To
+      </Text>
+      <Text style={{
+        color: 'white', fontFamily: serifFont, fontSize: compact ? 32 : 48, fontWeight: '700',
+        lineHeight: compact ? 40 : 56, letterSpacing: 0.5, marginTop: 2,
+        textShadowColor: 'rgba(0,0,0,0.4)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 14,
+      }}>
+        Around Loei
+      </Text>
+      {/* เส้นคั่นทองบางๆ ให้ดูหรู */}
+      <View style={{ width: 54, height: 3, borderRadius: 3, backgroundColor: '#D9B25F', marginTop: compact ? 12 : 16, marginBottom: compact ? 10 : 14 }} />
+      <Text style={{ color: 'rgba(255,255,255,0.86)', fontSize: compact ? 13 : 15.5, lineHeight: compact ? 20 : 24 }}>
+        {lang === 'TH'
+          ? 'ที่พักสไตล์โมเดิร์นใจกลางเมืองเลย สะดวก สงบ พร้อมต้อนรับทุกการเดินทางของคุณ'
+          : 'Modern stays in the heart of Loei — comfortable, calm, and ready to welcome every journey.'}
+      </Text>
+    </View>
+  );
+
+  // ไล่เฉดทับรูป (ใช้ซ้ำทั้งเดสก์ท็อป/มือถือ)
+  const heroOverlay = (
+    <>
+      <LinearGradient
+        colors={['rgba(6,20,36,0.30)', 'rgba(6,20,36,0.20)', 'rgba(4,14,26,0.72)']}
+        locations={[0, 0.45, 1]}
+        style={StyleSheet_absoluteFill}
+      />
+      <View style={{ ...StyleSheet_absoluteFill, backgroundColor: 'rgba(1,90,160,0.08)' }} />
+    </>
+  );
+
+  // ===== ปุ่มสลับภาษา (ลอยมุมขวาบน) =====
+  const langButton = (
+    <TouchableOpacity
+      onPress={() => setLang(lang === 'TH' ? 'EN' : 'TH')}
+      style={{
+        borderWidth: 1, borderColor: 'rgba(1,148,243,0.5)', paddingHorizontal: 14, paddingVertical: 7,
+        borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.85)',
+        ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' } : {}),
+      }}
+    >
+      <Text style={{ color: '#0178C7', fontWeight: 'bold', fontSize: 12 }}>{lang === 'TH' ? 'EN' : 'TH'}</Text>
+    </TouchableOpacity>
+  );
+
+  // ===== การ์ดฟอร์มกระจกฝ้า =====
+  const formCard = (
+    <View style={{
+      width: '100%', maxWidth: 460, alignSelf: 'center',
+      backgroundColor: Platform.OS === 'web' ? 'rgba(255,255,255,0.68)' : 'rgba(255,255,255,0.97)',
+      borderRadius: 30, paddingVertical: 34, paddingHorizontal: isWide ? 38 : 26,
+      borderWidth: 1, borderColor: 'rgba(255,255,255,0.75)',
+      shadowColor: '#0A2540', shadowOpacity: 0.22, shadowRadius: 34, shadowOffset: { width: 0, height: 20 }, elevation: 14,
+      ...(Platform.OS === 'web' ? { backdropFilter: 'blur(26px) saturate(140%)', WebkitBackdropFilter: 'blur(26px) saturate(140%)' } : {}),
+    }}>
+      <View style={{ alignItems: 'center', marginBottom: 26 }}>
+        <View style={{
+          width: 72, height: 72, borderRadius: 22, backgroundColor: '#0194F3',
+          justifyContent: 'center', alignItems: 'center',
+          elevation: 10, shadowColor: '#0194F3', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }
+        }}>
+          <Ionicons name="business" size={36} color="white" />
+        </View>
+        <Text style={{ fontSize: 30, fontFamily: serifFont, fontWeight: '700', color: '#14304C', marginTop: 14, letterSpacing: 0.3 }}>Around Loei</Text>
+        <Text style={{ fontSize: 15, color: '#6B7B8C', marginTop: 4 }}>{t.welcome}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 25, justifyContent: 'center' }}>
-        <View style={{ alignItems: 'center', marginBottom: 40 }}>
-          <View style={{
-            width: 80, height: 80, borderRadius: 25, backgroundColor: '#0194F3',
-            justifyContent: 'center', alignItems: 'center',
-            elevation: 10, shadowColor: '#0194F3', shadowOpacity: 0.3, shadowRadius: 10
-          }}>
-            <Ionicons name="business" size={40} color="white" />
-          </View>
-          <Text style={{ fontSize: 28, fontWeight: 'bold', color: '#333', marginTop: 20 }}>Around Loei</Text>
-          <Text style={{ fontSize: 16, color: '#777', marginTop: 5 }}>{t.welcome}</Text>
-        </View>
-
-        <View style={{ marginBottom: 20 }}>
+      <View style={{ marginBottom: 20 }}>
           {renderInput(t.email, 'user', 'Username', username, setUsername, false, 'default', {
             returnKeyType: 'next',
             onSubmitEditing: () => passwordRef.current?.focus(),
@@ -647,11 +745,59 @@ export default function LoginScreen() {
 
         <TouchableOpacity
           onPress={() => router.replace('/')}
-          style={{ marginTop: 30, alignItems: 'center' }}
+          style={{ marginTop: 26, alignItems: 'center' }}
         >
-          <Text style={{ color: '#BBB', fontSize: 13 }}>{t.back}</Text>
+          <Text style={{ color: '#9AAAB8', fontSize: 13 }}>{t.back}</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </View>
+  );
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#0B1F33' }}>
+      <StatusBar barStyle={isWide ? 'dark-content' : 'light-content'} />
+
+      {isWide ? (
+        // ===== จอกว้าง: รูปตึกเต็มจอ + การ์ดกระจกลอยซ้าย + กล่องข้อความขวาล่าง =====
+        <View style={{ flex: 1, backgroundColor: '#0B1F33', overflow: 'hidden' }}>
+          <Image source={HERO_IMG} resizeMode="cover" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', ...(Platform.OS === 'web' ? { objectFit: 'cover' } : {}) }} />
+          {heroOverlay}
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingVertical: 40, paddingHorizontal: 56 }}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={{ width: '100%', maxWidth: 470 }}>
+              {formCard}
+            </View>
+          </ScrollView>
+          {/* กล่องข้อความโปรโมทมุมขวาล่าง */}
+          <View style={{ position: 'absolute', right: 48, bottom: 44, maxWidth: 460 }}>
+            {promoBox(false)}
+          </View>
+        </View>
+      ) : (
+        // ===== มือถือ: แบนเนอร์รูปด้านบน (ขนาดพอดีจอ) + การ์ดฟอร์มด้านล่าง =====
+        <ScrollView
+          style={{ flex: 1, backgroundColor: '#EEF3F8' }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: 30 }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={{ width: '100%', height: bannerH, backgroundColor: '#0B1F33', overflow: 'hidden' }}>
+            <Image source={HERO_IMG} resizeMode="cover" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', ...(Platform.OS === 'web' ? { objectFit: 'cover' } : {}) }} />
+            {heroOverlay}
+            <View style={{ flex: 1, justifyContent: 'flex-end', padding: 20 }}>
+              {promoBox(true)}
+            </View>
+          </View>
+          <View style={{ paddingHorizontal: 16, marginTop: -34 }}>
+            {formCard}
+          </View>
+        </ScrollView>
+      )}
+
+      {/* ปุ่มสลับภาษา ลอยมุมขวาบน */}
+      <View style={{ position: 'absolute', top: Platform.OS === 'web' ? 18 : 44, right: 20, zIndex: 20 }}>
+        {langButton}
+      </View>
 
       {/* หน้าต่างกรอกอีเมลสำหรับล็อกอินด้วย Email */}
       <Modal

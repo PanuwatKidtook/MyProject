@@ -484,6 +484,22 @@ export default function ReservationListScreen() {
               <Ionicons name="chevron-forward" size={18} color="#16A34A" />
             </TouchableOpacity>
 
+            {/* สัญญาเช่า — ดูสัญญา ต่อสัญญา แจ้งย้ายออก */}
+            <TouchableOpacity
+              onPress={() => {
+                const item = choiceTarget;
+                setChoiceTarget(null);
+                router.push({ pathname: '/mycontracts', params: { bookingId: item.bookingId, roomNumber: item.roomNumber } });
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', borderRadius: 16, padding: 14, marginBottom: 16 }}
+            >
+              <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: 'white', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <Ionicons name="document-text-outline" size={18} color="#4F46E5" />
+              </View>
+              <Text style={{ flex: 1, fontWeight: '800', color: '#4338CA' }}>สัญญาเช่า</Text>
+              <Ionicons name="chevron-forward" size={18} color="#4F46E5" />
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={() => setChoiceTarget(null)} style={{ paddingVertical: 6, alignItems: 'center' }}>
               <Text style={{ color: '#94A3B8', fontWeight: '700', fontSize: 13 }}>ปิด</Text>
             </TouchableOpacity>
