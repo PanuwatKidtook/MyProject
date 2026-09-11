@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -31,6 +32,7 @@ export default function SocialSetupScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
+  const [successVisible, setSuccessVisible] = useState(false);
 
   const flash = (description, type = 'danger') =>
     showMessage({ message: type === 'danger' ? 'ข้อผิดพลาด' : 'สำเร็จ', description, type, icon: type, floating: true });
@@ -54,7 +56,7 @@ export default function SocialSetupScreen() {
 
     setLoading(true);
     try {
-      const res = await api.post(
+      await api.post(
         '/auth/social/complete',
         {
           username: username.trim(),
@@ -66,22 +68,11 @@ export default function SocialSetupScreen() {
         pendingToken ? { headers: { Authorization: `Bearer ${pendingToken}` } } : undefined
       );
 
-      const { token, payload } = res.data;
-      if (token) await AsyncStorage.setItem('token', token);
+      // สมัครสำเร็จ — ให้ผู้ใช้ไปเข้าสู่ระบบเองที่หน้าล็อกอิน (ไม่เก็บ session ที่ค้าง)
+      await AsyncStorage.removeItem('token');
+      await AsyncStorage.removeItem('userProfile');
 
-      await AsyncStorage.setItem('userProfile', JSON.stringify({
-        id: payload?.id,
-        username: payload?.username || username.trim(),
-        name: fullName,
-        full_name: fullName,
-        email: lockedEmail ? String(lockedEmail) : '',
-        phone_number: cleanPhone,
-        role: payload?.role || userRole,
-        isLoggedIn: true,
-      }));
-
-      flash('สมัครสมาชิกเรียบร้อย', 'success');
-      router.replace('/');
+      setSuccessVisible(true);
     } catch (err) {
       flash(err.response?.data?.message || 'สมัครสมาชิกไม่สำเร็จ');
     } finally {
@@ -218,12 +209,58 @@ export default function SocialSetupScreen() {
       </ScrollView>
 
       <FlashMessage position="top" statusBarHeight={StatusBar.currentHeight} />
+
+      {/* Modal "สมัครสมาชิกสำเร็จ" → เด้งไปหน้าล็อกอินเพื่อเข้าสู่ระบบ */}
+      <Modal visible={successVisible} transparent animationType="fade" onRequestClose={() => {}}>
+        <View style={styles.successOverlay}>
+          <View style={styles.successCard}>
+            <View style={styles.successIconWrap}>
+              <Ionicons name="checkmark-circle" size={64} color="#16A34A" />
+            </View>
+            <Text style={styles.successTitle}>สมัครสมาชิกสำเร็จ</Text>
+            <Text style={styles.successSub}>บันทึกข้อมูลเรียบร้อยแล้ว กดตกลงเพื่อเข้าสู่ระบบ</Text>
+            <TouchableOpacity
+              style={styles.successBtn}
+              onPress={() => { setSuccessVisible(false); router.replace('/login'); }}
+            >
+              <Text style={styles.successBtnText}>ไปหน้าเข้าสู่ระบบ</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0178C7' },
+  successOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+  },
+  successCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 26,
+    alignItems: 'center',
+  },
+  successIconWrap: { marginBottom: 12 },
+  successTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 6 },
+  successSub: { fontSize: 14, color: '#64748B', textAlign: 'center', marginBottom: 22 },
+  successBtn: {
+    backgroundColor: '#0178C7',
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+    borderRadius: 14,
+    width: '100%',
+    alignItems: 'center',
+  },
+  successBtnText: { color: 'white', fontSize: 16, fontWeight: '900' },
   headerBg: {
     backgroundColor: '#0178C7',
     alignItems: 'center',

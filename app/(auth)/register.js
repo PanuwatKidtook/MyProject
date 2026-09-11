@@ -867,10 +867,12 @@ export default function RegisterScreen() {
             </Text>
 
             <TouchableOpacity
-              onPress={() => {
+              onPress={async () => {
                 setSuccessVisible(false);
-                // social (LINE/Google): ล็อกอินอยู่แล้ว → เข้าแอปเลย · สมัครปกติ → กลับไปหน้าเข้าสู่ระบบ
-                router.replace(isSocialFlow ? '/' : '/login');
+                // สมัครเสร็จทุกกรณี → ให้ผู้ใช้ไปเข้าสู่ระบบเองที่หน้าล็อกอิน (เคลียร์ session ที่ค้างจาก social)
+                await AsyncStorage.removeItem('token');
+                await AsyncStorage.removeItem('userProfile');
+                router.replace('/login');
               }}
               style={{
                 backgroundColor: '#0194F3',

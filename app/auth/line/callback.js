@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { showMessage } from 'react-native-flash-message';
 import api from '../../../lib/api';
 
@@ -19,6 +20,7 @@ function decodeJwt(token) {
 // จัดการ token ที่นี่ที่เดียว แล้ว router.replace ไปหน้าเหมาะสม (กันหน้า Unmatched Route ค้าง)
 export default function LineCallback() {
   const params = useLocalSearchParams();
+  const [successVisible, setSuccessVisible] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -73,18 +75,32 @@ export default function LineCallback() {
           isLoggedIn: true,
         };
         await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
-        showMessage({
-          message: 'สำเร็จ',
-          description: 'เข้าสู่ระบบเรียบร้อยแล้ว',
-          type: 'success', icon: 'success', floating: true,
-        });
       } catch (e) {
-        // ถ้าดึงโปรไฟล์ไม่ได้ ยังถือว่ามี token แล้ว → ไปหน้าแรก
+        // ถ้าดึงโปรไฟล์ไม่ได้ ยังถือว่ามี token แล้ว → โชว์หน้าสำเร็จได้
       }
-      router.replace('/');
+      // เข้าสู่ระบบสำเร็จ → โชว์หน้า "เข้าสู่ระบบสำเร็จ" + ปุ่มตกลงเพื่อไปหน้าแรก
+      setSuccessVisible(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // หน้า "เข้าสู่ระบบสำเร็จ" — ไอคอนเช็ค + ปุ่มตกลงเพื่อไปหน้าแรก
+  if (successVisible) {
+    return (
+      <View style={styles.overlay}>
+        <View style={styles.card}>
+          <View style={styles.iconWrap}>
+            <Ionicons name="checkmark-circle" size={64} color="#16A34A" />
+          </View>
+          <Text style={styles.title}>เข้าสู่ระบบสำเร็จ</Text>
+          <Text style={styles.sub}>ยินดีต้อนรับกลับมา! กดตกลงเพื่อไปยังหน้าแรก</Text>
+          <TouchableOpacity style={styles.btn} onPress={() => router.replace('/')}>
+            <Text style={styles.btnText}>ตกลง</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'white' }}>
@@ -92,3 +108,38 @@ export default function LineCallback() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: '#EEF3F8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 26,
+    alignItems: 'center',
+    shadowColor: '#1E3A5F',
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 5,
+  },
+  iconWrap: { marginBottom: 12 },
+  title: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 6 },
+  sub: { fontSize: 14, color: '#64748B', textAlign: 'center', marginBottom: 22 },
+  btn: {
+    backgroundColor: '#0178C7',
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+    borderRadius: 14,
+    width: '100%',
+    alignItems: 'center',
+  },
+  btnText: { color: 'white', fontSize: 16, fontWeight: '900' },
+});
