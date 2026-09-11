@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
+import SuccessCheck from '../../components/SuccessCheck';
 
 // หน้า "ตั้งค่าบัญชี" สำหรับผู้ใช้ใหม่จาก Google/LINE (deferCreate — ยังไม่ถูกสร้างจนกดยืนยัน)
 // ส่ง pendingToken เฉพาะ request นี้ (ไม่เก็บลงเครื่องจนได้ token จริง)
@@ -215,7 +216,7 @@ export default function SocialSetupScreen() {
         <View style={styles.successOverlay}>
           <View style={styles.successCard}>
             <View style={styles.successIconWrap}>
-              <Ionicons name="checkmark-circle" size={64} color="#16A34A" />
+              <SuccessCheck size={96} />
             </View>
             <Text style={styles.successTitle}>สมัครสมาชิกสำเร็จ</Text>
             <Text style={styles.successSub}>บันทึกข้อมูลเรียบร้อยแล้ว กดตกลงเพื่อเข้าสู่ระบบ</Text>

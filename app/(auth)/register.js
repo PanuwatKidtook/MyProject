@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
+import SuccessCheck from '../../components/SuccessCheck';
 
 const { width, height } = Dimensions.get('window');
 
@@ -859,6 +860,9 @@ export default function RegisterScreen() {
             padding: 24,
             alignItems: 'center'
           }}>
+            <View style={{ marginBottom: 12 }}>
+              <SuccessCheck size={96} />
+            </View>
             <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 10, color: '#222' }}>
               {lang === 'TH' ? 'สมัครสมาชิกสำเร็จ' : 'Registration Successful'}
             </Text>

@@ -20,6 +20,7 @@ import {
 import FlashMessage, { showMessage } from 'react-native-flash-message';
 import api from '../../lib/api';
 import { openLineAuthNative, startGoogleLogin, startLineLogin } from '../../lib/socialAuth';
+import SuccessCheck from '../../components/SuccessCheck';
 
 const { width } = Dimensions.get('window');
 
@@ -1056,6 +1057,9 @@ export default function LoginScreen() {
       <Modal visible={successVisible} transparent animationType="fade" onRequestClose={() => setSuccessVisible(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
           <View style={{ width: width * 0.8, backgroundColor: 'white', borderRadius: 18, padding: 24, alignItems: 'center' }}>
+            <View style={{ marginBottom: 12 }}>
+              <SuccessCheck size={96} />
+            </View>
             <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 10, color: '#222' }}>
               {lang === 'TH' ? 'เข้าสู่ระบบสำเร็จ' : 'Login Successful'}
             </Text>

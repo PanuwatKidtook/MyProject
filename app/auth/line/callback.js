@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { showMessage } from 'react-native-flash-message';
 import api from '../../../lib/api';
+import SuccessCheck from '../../../components/SuccessCheck';
 
 // ถอด payload จาก JWT (id/username/role) — payload เป็น ASCII ล้วน ใช้ atob ได้
 function decodeJwt(token) {
@@ -90,7 +90,7 @@ export default function LineCallback() {
       <View style={styles.overlay}>
         <View style={styles.card}>
           <View style={styles.iconWrap}>
-            <Ionicons name="checkmark-circle" size={64} color="#16A34A" />
+            <SuccessCheck size={96} />
           </View>
           <Text style={styles.title}>เข้าสู่ระบบสำเร็จ</Text>
           <Text style={styles.sub}>ยินดีต้อนรับกลับมา! กดตกลงเพื่อไปยังหน้าแรก</Text>

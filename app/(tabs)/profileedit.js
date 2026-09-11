@@ -19,6 +19,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import api from '../../lib/api';
+import SuccessCheck from '../../components/SuccessCheck';
 
 
 export default function ProfileEditScreen() {
@@ -345,7 +346,7 @@ export default function ProfileEditScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.successCard}>
             <View style={styles.successIcon}>
-              <Ionicons name="checkmark-circle" size={56} color="#16A34A" />
+              <SuccessCheck size={92} />
             </View>
             <Text style={styles.successTitle}>อัปเดตข้อมูลแล้ว</Text>
             <Text style={styles.successSub}>บันทึกข้อมูลโปรไฟล์เรียบร้อยแล้ว</Text>
