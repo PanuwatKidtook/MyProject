@@ -46,6 +46,47 @@ export default function EditRegisterScreen() {
     confirmPassword: '',
   });
 
+  // refs สำหรับช่อง OTP 6 กล่อง (เลื่อนช่องอัตโนมัติ)
+  const otpRefs = useRef([]);
+
+  const handleOtpDigit = (index, value) => {
+    if (errorMsg) setErrorMsg('');
+    const digits = value.replace(/[^0-9]/g, '');
+
+    setForm(prev => {
+      const arr = (prev.otp || '').padEnd(6, ' ').split('');
+      if (digits.length > 1) {
+        // กรณีวางรหัส (paste) หลายตัวพร้อมกัน
+        const pasted = digits.slice(0, 6).split('');
+        for (let i = 0; i < 6; i++) arr[i] = pasted[i] || ' ';
+        const next = Math.min(pasted.length, 5);
+        otpRefs.current[next]?.focus();
+      } else {
+        arr[index] = digits || ' ';
+        if (digits) otpRefs.current[index + 1]?.focus();
+      }
+      return { ...prev, otp: arr.join('').replace(/ /g, '') };
+    });
+  };
+
+  const handleOtpKeyPress = (index, e) => {
+    if (e.nativeEvent.key === 'Backspace') {
+      setForm(prev => {
+        const arr = (prev.otp || '').padEnd(6, ' ').split('');
+        if (!arr[index] || arr[index] === ' ') {
+          // ช่องว่างอยู่แล้ว → ถอยไปช่องก่อนหน้า
+          if (index > 0) {
+            arr[index - 1] = ' ';
+            otpRefs.current[index - 1]?.focus();
+          }
+        } else {
+          arr[index] = ' ';
+        }
+        return { ...prev, otp: arr.join('').replace(/ /g, '') };
+      });
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -174,9 +215,17 @@ export default function EditRegisterScreen() {
       await AsyncStorage.removeItem('editRegisterOtp');
       await AsyncStorage.removeItem('editRegisterVerified');
 
-      Alert.alert('สำเร็จ', 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว', [
-        { text: 'ตกลง', onPress: () => router.replace('/login') }
-      ]);
+      // แจ้งเตือนสำเร็จ แล้วเด้งไปหน้าล็อกอินทันที (รองรับทั้งเว็บและมือถือ)
+      if (Platform.OS === 'web') {
+        window.alert('เปลี่ยนรหัสผ่านสำเร็จ');
+        router.replace('/login');
+      } else {
+        Alert.alert('สำเร็จ', 'เปลี่ยนรหัสผ่านสำเร็จ', [
+          { text: 'ตกลง', onPress: () => router.replace('/login') }
+        ]);
+        // เผื่อผู้ใช้ไม่กดปุ่ม ก็เด้งให้อัตโนมัติ
+        router.replace('/login');
+      }
     } catch (error) {
       console.log('Save password error:', error);
       setErrorMsg(error.response?.data?.message || 'ไม่สามารถบันทึกรหัสผ่านได้');
@@ -225,6 +274,9 @@ export default function EditRegisterScreen() {
 
           {step === 1 && (
             <View style={styles.card}>
+              <View style={styles.cardIcon}>
+                <Ionicons name="mail-outline" size={26} color="#0194F3" />
+              </View>
               <Text style={styles.sectionTitle}>กรอกข้อมูลเพื่อรับ OTP</Text>
 
               <Text style={styles.subText}>
@@ -258,21 +310,38 @@ export default function EditRegisterScreen() {
 
           {step === 2 && (
             <View style={styles.card}>
+              <View style={styles.cardIcon}>
+                <Ionicons name="shield-checkmark-outline" size={26} color="#0194F3" />
+              </View>
               <Text style={styles.sectionTitle}>กรอกรหัส OTP</Text>
               {maskedEmail ? (
                 <Text style={styles.subText}>ส่งรหัส OTP ไปที่ {maskedEmail} แล้ว</Text>
               ) : null}
-              <Text style={styles.subText}>รหัสจะหมดเวลาใน {countdown} วินาที</Text>
+              <View style={styles.countdownPill}>
+                <Ionicons name="time-outline" size={15} color={countdown > 0 ? '#0178C7' : '#DC2626'} />
+                <Text style={[styles.countdownText, countdown === 0 && { color: '#DC2626' }]}>
+                  {countdown > 0 ? `รหัสจะหมดเวลาใน ${countdown} วินาที` : 'รหัสหมดเวลาแล้ว'}
+                </Text>
+              </View>
 
-              <TextInput
-                value={form.otp}
-                onChangeText={(text) => handleChange('otp', text.replace(/[^0-9]/g, '').slice(0, 6))}
-                placeholder="กรอกรหัส OTP 6 หลัก"
-                placeholderTextColor="#94A3B8"
-                keyboardType="number-pad"
-                maxLength={6}
-                style={styles.input}
-              />
+              <View style={styles.otpRow}>
+                {[0, 1, 2, 3, 4, 5].map((i) => {
+                  const digit = (form.otp || '')[i] || '';
+                  return (
+                    <TextInput
+                      key={i}
+                      ref={(el) => { otpRefs.current[i] = el; }}
+                      value={digit}
+                      onChangeText={(text) => handleOtpDigit(i, text)}
+                      onKeyPress={(e) => handleOtpKeyPress(i, e)}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      selectTextOnFocus
+                      style={[styles.otpBox, digit ? styles.otpBoxFilled : null]}
+                    />
+                  );
+                })}
+              </View>
 
               <TouchableOpacity
                 onPress={handleVerifyOtp}
@@ -300,6 +369,9 @@ export default function EditRegisterScreen() {
 
           {step === 3 && (
             <View style={styles.card}>
+              <View style={styles.cardIcon}>
+                <Ionicons name="lock-closed-outline" size={26} color="#0194F3" />
+              </View>
               <Text style={styles.sectionTitle}>เปลี่ยนรหัสผ่านใหม่</Text>
 
               <Text style={styles.label}>รหัสผ่านใหม่</Text>
@@ -390,11 +462,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.15)',
   },
   headerTitle: { color: 'white', fontSize: 18, fontWeight: '900' },
-  content: { padding: 20, paddingBottom: 40 },
-  stepBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  content: { padding: 20, paddingBottom: 40, maxWidth: 520, width: '100%', alignSelf: 'center' },
+  stepBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 24, marginTop: 4 },
   stepDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#CBD5E1' },
-  stepDotActive: { backgroundColor: '#0194F3' },
-  stepLine: { width: 35, height: 2, backgroundColor: '#CBD5E1', marginHorizontal: 8 },
+  stepDotActive: {
+    backgroundColor: '#0194F3',
+    transform: [{ scale: 1.25 }],
+    shadowColor: '#0194F3',
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  stepLine: { width: 35, height: 3, borderRadius: 2, backgroundColor: '#CBD5E1', marginHorizontal: 8 },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -407,20 +486,73 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   errorText: { flex: 1, color: '#DC2626', fontSize: 13, fontWeight: '700' },
-  card: { backgroundColor: 'white', borderRadius: 24, padding: 18, borderWidth: 1, borderColor: '#E2E8F0' },
-  sectionTitle: { fontSize: 18, fontWeight: '900', color: '#0194F3', marginBottom: 8 },
+  card: {
+    backgroundColor: 'white',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  cardIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#E8F4FD',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  sectionTitle: { fontSize: 19, fontWeight: '900', color: '#0F172A', marginBottom: 8 },
   subText: { fontSize: 13, color: '#64748B', marginBottom: 14, fontWeight: '600' },
   label: { fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 8, marginTop: 10 },
   input: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#CBD5E1',
     borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
     color: '#0F172A',
     backgroundColor: '#F8FAFC',
   },
+  otpRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  otpBox: {
+    width: 46,
+    height: 58,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  otpBoxFilled: {
+    borderColor: '#0194F3',
+    backgroundColor: '#EFF8FF',
+  },
+  countdownPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 14,
+  },
+  countdownText: { fontSize: 12.5, fontWeight: '700', color: '#0178C7', marginLeft: 6 },
   passwordWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -447,11 +579,16 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   actionButton: {
-    marginTop: 18,
+    marginTop: 20,
     backgroundColor: '#0194F3',
     paddingVertical: 16,
-    borderRadius: 18,
+    borderRadius: 16,
     alignItems: 'center',
+    shadowColor: '#0194F3',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   actionButtonText: { color: 'white', fontSize: 16, fontWeight: '900' },
   resendButton: { marginTop: 12, alignItems: 'center', paddingVertical: 10 },

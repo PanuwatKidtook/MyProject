@@ -423,7 +423,7 @@ export default function HomeScreen() {
             {user ? (
               <View style={{ paddingTop: 10 }}>
                 <TouchableOpacity
-                  onPress={() => { setPressedMenuItem('profileedit'); router.push('/profileedit'); setIsMenuOpen(false); setPressedMenuItem(null); }}
+                  onPress={() => { setPressedMenuItem('profileedit'); router.push('/profile'); setIsMenuOpen(false); setPressedMenuItem(null); }}
                   onPressIn={() => setPressedMenuItem('profileedit')}
                   onPressOut={() => setPressedMenuItem(null)}
                   style={menuItemStyle('profileedit')}
