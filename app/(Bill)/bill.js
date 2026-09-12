@@ -137,7 +137,9 @@ export default function BillScreen() {
       Alert.alert('ต้องการสิทธิ์', 'กรุณาอนุญาตให้เข้าถึงคลังรูปภาพเพื่อแนบสลิป');
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+    // quality: 1 = ไม่บีบอัด — สำคัญมาก เพราะ backend ต้องถอด QR ในสลิปเพื่อตรวจสอบ
+    // ถ้าบีบอัด (0.7) รูปจาก native จะเบลอจน decode QR ไม่ออก → สลิปจริงถูกตีกลับว่า "ไม่ใช่สลิป"
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
     if (!res.canceled && res.assets?.[0]) {
       setSlip(res.assets[0]);
       setSlipError(null);

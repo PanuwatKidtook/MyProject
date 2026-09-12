@@ -49,7 +49,8 @@ export default function PayInvoiceModal({ visible, invoice, onClose, onPaid }) {
       Alert.alert('ต้องการสิทธิ์', 'กรุณาอนุญาตให้เข้าถึงคลังรูปภาพเพื่อแนบสลิป');
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+    // quality: 1 = ไม่บีบอัด — backend ต้องถอด QR ในสลิปเพื่อตรวจสอบ (บีบอัดแล้ว decode ไม่ออก)
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
     if (!res.canceled && res.assets?.[0]) setSlip(res.assets[0]);
   };
 
