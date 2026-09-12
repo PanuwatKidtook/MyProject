@@ -8,6 +8,12 @@
     "scheme": "myproject",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/0e0dbe47-a6e4-45c5-a6e2-cf7750b17daf"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.aroundloei.myproject"
